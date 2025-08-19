@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import './App.css'
+import TeamDrawTab from './components/TeamDrawTab'
 
 function ParticipantManager({ participants, participantCount, onAddParticipant, onRemoveParticipant, onGenerateTournament, onBack }) {
   const [newParticipantName, setNewParticipantName] = useState('')
@@ -241,6 +242,7 @@ function TournamentSettingsModal({ onClose }) {
 function TournamentView({ tournament, onBack, onUpdateMatch }) {
   const [selectedMatch, setSelectedMatch] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [currentTab, setCurrentTab] = useState('tournament') // tournament, team-draw
 
   const handleMatchClick = (roundIndex, match) => {
     if (!match.completed && match.player1.id !== 'bye' && match.player2.id !== 'bye') {
@@ -462,21 +464,31 @@ Turnuva detayları:
   const leaderboard = calculateLeaderboard()
   const tournamentCompleted = isTournamentCompleted()
 
+  if (currentTab === 'team-draw') {
+    return <TeamDrawTab tournament={tournament} onBack={() => setCurrentTab('tournament')} />
+  }
+
   return (
     <div className="tournament-view">
       <div className="tournament-header">
         <button className="btn-back" onClick={onBack}>← Geri</button>
         <h1>{tournament.name}</h1>
-        <button className="btn-settings" onClick={() => setShowSettings(true)}>⚙️</button>
+        <div className="header-actions">
+          <button className="btn-tab" onClick={() => setCurrentTab('team-draw')}>🎯 Team Draw</button>
+          <button className="btn-settings" onClick={() => setShowSettings(true)}>⚙️</button>
+        </div>
       </div>
 
       {/* Leaderboard */}
       <div className="leaderboard">
         <div className="leaderboard-title">
           <img 
-            src="https://logos-world.net/wp-content/uploads/2020/06/UEFA-Champions-League-Logo.png" 
+            src="https://assets.stickpng.com/images/5842fe06a6515b1e0ad75b3b.png" 
             alt="UCL Logo" 
             className="ucl-logo"
+            onError={(e) => {
+              e.target.src = "https://brandslogos.com/wp-content/uploads/images/large/uefa-champions-league-logo-1.png"
+            }}
           />
           <h2>PUAN TABLOSU</h2>
         </div>
