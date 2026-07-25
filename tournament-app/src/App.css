@@ -2471,3 +2471,118 @@ body::after {
     opacity: 0;
   }
 }
+
+/* Live-follow (Firebase join code) UI */
+
+.sync-code-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 12px auto;
+  padding: 10px 18px;
+  max-width: 500px;
+  background: rgba(0, 255, 136, 0.08);
+  border: 1px solid var(--ea-green);
+  border-radius: 8px;
+  color: var(--ea-green);
+  font-weight: 600;
+}
+
+.btn-copy-code {
+  background: var(--ea-green);
+  color: var(--ea-black);
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-copy-code:hover {
+  background: var(--ea-green-light);
+}
+
+.read-only-banner {
+  margin: 12px auto;
+  padding: 10px 18px;
+  max-width: 500px;
+  text-align: center;
+  background: rgba(255, 102, 0, 0.1);
+  border: 1px solid var(--ea-orange);
+  border-radius: 8px;
+  color: var(--ea-orange);
+  font-weight: 600;
+}
+
+.join-tournament {
+  max-width: 480px;
+  margin: 24px auto 0;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--ea-light-gray);
+  border-radius: 10px;
+  text-align: center;
+}
+
+.join-tournament h2 {
+  color: var(--ea-green);
+  margin-bottom: 6px;
+}
+
+.join-tournament p {
+  color: var(--ea-text-gray);
+  font-size: 0.9rem;
+  margin-bottom: 14px;
+}
+
+.join-form {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.join-form input {
+  flex: 1;
+  max-width: 220px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--ea-light-gray);
+  background: var(--ea-dark-gray);
+  color: var(--ea-white);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  text-align: center;
+}
+
+.join-error {
+  color: var(--ea-red);
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+.join-info {
+  color: var(--ea-text-gray);
+  margin-top: 10px;
+  font-size: 0.8rem;
+}
+
+.tournament-connecting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 60vh;
+  color: var(--ea-text-gray);
+}
+
+.stir-wheel-waiting {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--ea-text-gray);
+}
+
+.covered-ball.read-only {
+  cursor: default;
+}

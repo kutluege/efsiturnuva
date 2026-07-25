@@ -1,6 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import TeamDrawTab from './components/TeamDrawTab'
+import { calculateLeaderboard } from './utils/leaderboard'
+import { loadLocalState } from './utils/localPersistence'
+import { useTournamentPersistence } from './hooks/useTournamentPersistence'
+import { isFirebaseConfigured } from './firebase'
+import { createRemoteTournament, updateRemoteTournament, subscribeToTournament, joinCodeExists } from './services/tournamentSync'
 
 function ParticipantManager({ participants, participantCount, onAddParticipant, onRemoveParticipant, onGenerateTournament, onBack }) {
   const [newParticipantName, setNewParticipantName] = useState('')
@@ -239,12 +244,13 @@ function TournamentSettingsModal({ onClose }) {
   )
 }
 
-function TournamentView({ tournament, onBack, onUpdateMatch }) {
+function TournamentView({ tournament, onBack, onUpdateMatch, onUpdateDraw, isOwner, syncCode }) {
   const [selectedMatch, setSelectedMatch] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [currentTab, setCurrentTab] = useState('tournament') // tournament, team-draw
 
   const handleMatchClick = (roundIndex, match) => {
+    if (!isOwner) return
     if (!match.completed && match.player1.id !== 'bye' && match.player2.id !== 'bye') {
       setSelectedMatch({ roundIndex, match })
     }
@@ -255,116 +261,6 @@ function TournamentView({ tournament, onBack, onUpdateMatch }) {
       onUpdateMatch(selectedMatch.roundIndex, selectedMatch.match.id, winnerId, score)
       setSelectedMatch(null)
     }
-  }
-
-  // Calculate leaderboard
-  const calculateLeaderboard = () => {
-    const standings = {}
-    
-    // Initialize standings
-    tournament.participants.forEach(participant => {
-      standings[participant.id] = {
-        player: participant,
-        points: 0,
-        wins: 0,
-        draws: 0,
-        losses: 0,
-        goalsFor: 0,
-        goalsAgainst: 0,
-        goalDifference: 0,
-        matches: []
-      }
-    })
-
-    // Calculate points from all matches
-    tournament.rounds.forEach(round => {
-      round.forEach(match => {
-        if (match.completed && match.player2.id !== 'bye') {
-          const player1Stats = standings[match.player1.id]
-          const player2Stats = standings[match.player2.id]
-          
-          player1Stats.goalsFor += match.score.player1
-          player1Stats.goalsAgainst += match.score.player2
-          player2Stats.goalsFor += match.score.player2
-          player2Stats.goalsAgainst += match.score.player1
-          
-          player1Stats.matches.push({
-            opponent: match.player2,
-            goalsFor: match.score.player1,
-            goalsAgainst: match.score.player2,
-            result: match.winner === 'draw' ? 'draw' : (match.winner?.id === match.player1.id ? 'win' : 'loss')
-          })
-          
-          player2Stats.matches.push({
-            opponent: match.player1,
-            goalsFor: match.score.player2,
-            goalsAgainst: match.score.player1,
-            result: match.winner === 'draw' ? 'draw' : (match.winner?.id === match.player2.id ? 'win' : 'loss')
-          })
-
-          if (match.winner === 'draw') {
-            player1Stats.points += 1
-            player2Stats.points += 1
-            player1Stats.draws += 1
-            player2Stats.draws += 1
-          } else if (match.winner?.id === match.player1.id) {
-            player1Stats.points += 3
-            player1Stats.wins += 1
-            player2Stats.losses += 1
-          } else {
-            player2Stats.points += 3
-            player2Stats.wins += 1
-            player1Stats.losses += 1
-          }
-        }
-      })
-    })
-
-    // Calculate goal difference
-    Object.values(standings).forEach(stats => {
-      stats.goalDifference = stats.goalsFor - stats.goalsAgainst
-    })
-
-    // Sort standings with head-to-head tiebreaker
-    const sortedStandings = Object.values(standings).sort((a, b) => {
-      // First by points
-      if (a.points !== b.points) return b.points - a.points
-      
-      // Head-to-head record if points are tied
-      const headToHead = getHeadToHeadRecord(a, b)
-      if (headToHead.aPoints !== headToHead.bPoints) {
-        return headToHead.bPoints - headToHead.aPoints
-      }
-      
-      // Goal difference
-      if (a.goalDifference !== b.goalDifference) return b.goalDifference - a.goalDifference
-      
-      // Goals scored
-      return b.goalsFor - a.goalsFor
-    })
-
-    return sortedStandings
-  }
-
-  const getHeadToHeadRecord = (playerA, playerB) => {
-    let aPoints = 0
-    let bPoints = 0
-    
-    playerA.matches.forEach(match => {
-      if (match.opponent.id === playerB.player.id) {
-        if (match.result === 'win') aPoints += 3
-        else if (match.result === 'draw') aPoints += 1
-      }
-    })
-    
-    playerB.matches.forEach(match => {
-      if (match.opponent.id === playerA.player.id) {
-        if (match.result === 'win') bPoints += 3
-        else if (match.result === 'draw') bPoints += 1
-      }
-    })
-    
-    return { aPoints, bPoints }
   }
 
   // Check if tournament is completed
@@ -405,13 +301,16 @@ function TournamentView({ tournament, onBack, onUpdateMatch }) {
   }
 
   const shareViaEmail = () => {
-    const tournamentUrl = window.location.href
+    const tournamentUrl = syncCode
+      ? `${window.location.origin}${window.location.pathname}?join=${syncCode}`
+      : window.location.href
     const subject = encodeURIComponent(`${tournament.name} Turnuva Takibi`)
+    const codeLine = syncCode ? `\nTakip Kodu: ${syncCode}\n` : ''
     const body = encodeURIComponent(`Merhaba,
 
 ${tournament.name} turnuvasını canlı olarak takip edebilirsiniz:
 ${tournamentUrl}
-
+${codeLine}
 Turnuva detayları:
 - Katılımcı Sayısı: ${tournament.participants.length}
 - Toplam Hafta: ${tournament.rounds.length}
@@ -461,11 +360,19 @@ Turnuva detayları:
     link.click()
   }
 
-  const leaderboard = calculateLeaderboard()
+  const leaderboard = calculateLeaderboard(tournament)
   const tournamentCompleted = isTournamentCompleted()
 
   if (currentTab === 'team-draw') {
-    return <TeamDrawTab tournament={tournament} onBack={() => setCurrentTab('tournament')} />
+    return (
+      <TeamDrawTab
+        tournament={tournament}
+        draw={tournament.draw}
+        onDrawChange={onUpdateDraw}
+        isOwner={isOwner}
+        onBack={() => setCurrentTab('tournament')}
+      />
+    )
   }
 
   return (
@@ -475,9 +382,27 @@ Turnuva detayları:
         <h1>{tournament.name}</h1>
         <div className="header-actions">
           <button className="btn-tab" onClick={() => setCurrentTab('team-draw')}>🎯 Team Draw</button>
-          <button className="btn-settings" onClick={() => setShowSettings(true)}>⚙️</button>
+          {isOwner && (
+            <button className="btn-settings" onClick={() => setShowSettings(true)}>⚙️</button>
+          )}
         </div>
       </div>
+
+      {isOwner && syncCode && (
+        <div className="sync-code-banner">
+          <span>Takip Kodu: <strong>{syncCode}</strong></span>
+          <button
+            className="btn-copy-code"
+            onClick={() => navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?join=${syncCode}`)}
+          >
+            Bağlantıyı Kopyala
+          </button>
+        </div>
+      )}
+
+      {!isOwner && (
+        <div className="read-only-banner">Bu turnuvayı canlı takip ediyorsunuz (salt okunur)</div>
+      )}
 
       {/* Leaderboard */}
       <div className="leaderboard">
@@ -529,9 +454,9 @@ Turnuva detayları:
             <h3>{roundIndex + 1}. HAFTA</h3>
             <div className="matches">
               {round.map(match => (
-                <div 
-                  key={match.id} 
-                  className={`match ${match.completed ? 'completed' : 'pending'} ${match.player1.id !== 'bye' && match.player2.id !== 'bye' && !match.completed ? 'clickable' : ''}`}
+                <div
+                  key={match.id}
+                  className={`match ${match.completed ? 'completed' : 'pending'} ${isOwner && match.player1.id !== 'bye' && match.player2.id !== 'bye' && !match.completed ? 'clickable' : ''}`}
                   onClick={() => handleMatchClick(roundIndex, match)}
                 >
                   <div className="match-players">
@@ -582,12 +507,21 @@ Turnuva detayları:
 }
 
 function App() {
-  const [tournamentName, setTournamentName] = useState('')
-  const [participantCount, setParticipantCount] = useState(4)
-  const [matchType, setMatchType] = useState('double')
-  const [participants, setParticipants] = useState([])
-  const [currentView, setCurrentView] = useState('setup')
-  const [tournament, setTournament] = useState(null)
+  const [stored] = useState(() => loadLocalState())
+
+  const [tournamentName, setTournamentName] = useState(() => stored?.tournamentName ?? '')
+  const [participantCount, setParticipantCount] = useState(() => stored?.participantCount ?? 4)
+  const [matchType, setMatchType] = useState(() => stored?.matchType ?? 'double')
+  const [participants, setParticipants] = useState(() => stored?.participants ?? [])
+  const [currentView, setCurrentView] = useState(() => stored?.tournament ? 'tournament' : (stored?.currentView ?? 'setup'))
+  const [tournament, setTournament] = useState(() => stored?.tournament ?? null)
+  const [syncState, setSyncState] = useState(() => stored?.sync ?? { tournamentCode: null, isOwner: true })
+  const [joinCodeInput, setJoinCodeInput] = useState('')
+  const [joinError, setJoinError] = useState('')
+  const [isJoining, setIsJoining] = useState(false)
+  const hasAutoJoined = useRef(false)
+
+  useTournamentPersistence({ tournamentName, participantCount, matchType, participants, currentView, tournament, sync: syncState })
 
   const addParticipant = (name) => {
     if (name.trim() && participants.length < participantCount) {
@@ -606,39 +540,73 @@ function App() {
       
       // If double match is selected, duplicate the rounds
       if (matchType === 'double') {
-        const secondRounds = rounds.map((round, roundIndex) => {
-          return round.map((match, matchIndex) => {
+        const secondRounds = rounds.map((round) => {
+          return round.map((match) => {
             // Swap player1 and player2 for the second leg
+            const newPlayer1 = match.player2
+            const newPlayer2 = match.player1
+            const isBye = newPlayer1.id === 'bye' || newPlayer2.id === 'bye'
+            const winner = isBye ? (newPlayer1.id === 'bye' ? newPlayer2 : newPlayer1) : null
+            const score = isBye
+              ? (newPlayer1.id === 'bye' ? { player1: 0, player2: 3 } : { player1: 3, player2: 0 })
+              : { player1: 0, player2: 0 }
+
             return {
               ...match,
               id: `second-${match.id}`,
-              player1: match.player2,
-              player2: match.player1,
-              winner: match.id.includes('bye') ? match.player2 : null,
-              completed: match.id.includes('bye'),
-              score: match.id.includes('bye') ? { player1: 3, player2: 0 } : { player1: 0, player2: 0 }
+              player1: newPlayer1,
+              player2: newPlayer2,
+              winner,
+              completed: isBye,
+              score
             }
           })
         })
         rounds = [...rounds, ...secondRounds]
       }
       
-      setTournament({
+      const newTournament = {
         name: tournamentName.trim() || 'Turnuva',
         participants: shuffled,
         rounds: rounds,
-        currentRound: 0
-      })
+        currentRound: 0,
+        draw: {
+          currentStep: 'pot-selection',
+          selectedPot: null,
+          availableTeams: [],
+          selectedTeams: [],
+          revealedBalls: [],
+          drawCount: 0,
+          stirWheelResult: null
+        },
+        settings: {
+          winPoints: 3,
+          drawPoints: 1,
+          losePoints: 0,
+          allowDraws: false,
+          showGoalDiff: true,
+          showGoalsForAgainst: true,
+          tiebreaker: 'two'
+        }
+      }
+
+      setTournament(newTournament)
+      setSyncState({ tournamentCode: null, isOwner: true })
       setCurrentView('tournament')
+
+      if (isFirebaseConfigured) {
+        createRemoteTournament(newTournament)
+          .then(code => {
+            if (code) setSyncState({ tournamentCode: code, isOwner: true })
+          })
+          .catch(err => console.error('[firebase] failed to create remote tournament', err))
+      }
     }
   }
 
   const generateBracket = (players) => {
     const rounds = []
     const numPlayers = players.length
-    
-    // Create proper round-robin schedule
-    let schedule = []
     let playersList = [...players]
     
     // If odd number of players, add a dummy "BYE" player
@@ -706,6 +674,7 @@ function App() {
   }
 
   const updateMatchResult = (roundIndex, matchId, winnerId, score) => {
+    if (!syncState.isOwner) return
     setTournament(prev => {
       const newTournament = { ...prev }
       const updatedRounds = [...newTournament.rounds]
@@ -740,8 +709,84 @@ function App() {
     })
   }
 
+  const updateDraw = (partialDraw) => {
+    if (!syncState.isOwner) return
+    setTournament(prev => prev ? { ...prev, draw: { ...prev.draw, ...partialDraw } } : prev)
+  }
+
+  // Owner write-through: push every tournament change (match results, draw progress,
+  // settings) to Firestore so followers watching the join code see it live.
+  useEffect(() => {
+    if (!isFirebaseConfigured || !syncState.isOwner || !syncState.tournamentCode || !tournament) return
+    const timer = setTimeout(() => {
+      updateRemoteTournament(syncState.tournamentCode, tournament)
+        .catch(err => console.error('[firebase] failed to sync tournament', err))
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [tournament, syncState.isOwner, syncState.tournamentCode])
+
+  // Follower subscription: replace local tournament state with whatever the owner last wrote.
+  useEffect(() => {
+    if (!syncState.tournamentCode || syncState.isOwner) return
+    const unsubscribe = subscribeToTournament(
+      syncState.tournamentCode,
+      data => setTournament(data),
+      () => setJoinError('Kod bulunamadı veya bağlantı kurulamadı.')
+    )
+    return unsubscribe
+  }, [syncState.tournamentCode, syncState.isOwner])
+
+  const joinTournament = async (rawCode) => {
+    const code = rawCode.trim().toUpperCase()
+    if (!code) return
+    if (!isFirebaseConfigured) {
+      setJoinError('Canlı takip şu anda yapılandırılmamış.')
+      return
+    }
+    setIsJoining(true)
+    setJoinError('')
+    const exists = await joinCodeExists(code)
+    setIsJoining(false)
+    if (!exists) {
+      setJoinError('Kod bulunamadı.')
+      return
+    }
+    setSyncState({ tournamentCode: code, isOwner: false })
+    setCurrentView('tournament')
+  }
+
+  // Auto-join if the page was opened via a shared ?join=CODE link.
+  useEffect(() => {
+    if (hasAutoJoined.current || tournament) return
+    hasAutoJoined.current = true
+    const codeFromUrl = new URLSearchParams(window.location.search).get('join')
+    if (codeFromUrl) {
+      setJoinCodeInput(codeFromUrl)
+      joinTournament(codeFromUrl)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   if (currentView === 'tournament' && tournament) {
-    return <TournamentView tournament={tournament} onBack={() => setCurrentView('setup')} onUpdateMatch={updateMatchResult} />
+    return (
+      <TournamentView
+        tournament={tournament}
+        onBack={() => setCurrentView('setup')}
+        onUpdateMatch={updateMatchResult}
+        onUpdateDraw={updateDraw}
+        isOwner={syncState.isOwner}
+        syncCode={syncState.tournamentCode}
+      />
+    )
+  }
+
+  if (currentView === 'tournament' && !tournament && !syncState.isOwner) {
+    return (
+      <div className="tournament-connecting">
+        <div className="spinner"></div>
+        <p>Turnuvaya bağlanılıyor...</p>
+      </div>
+    )
   }
 
   return (
@@ -797,13 +842,38 @@ function App() {
             </div>
           </div>
 
-          <button 
+          <button
             className="btn-primary"
             onClick={() => setCurrentView('participants')}
           >
             Katılımcı Ekle
           </button>
         </div>
+      </div>
+
+      <div className="join-tournament">
+        <h2>Bir Turnuvayı Takip Et</h2>
+        <p>Takip kodunuz varsa buraya girerek turnuvayı canlı izleyebilirsiniz.</p>
+        <div className="join-form">
+          <input
+            type="text"
+            value={joinCodeInput}
+            onChange={(e) => { setJoinCodeInput(e.target.value.toUpperCase()); setJoinError('') }}
+            placeholder="Takip Kodu (örn. AB3XQ9)"
+            maxLength={6}
+          />
+          <button
+            className="btn-primary"
+            onClick={() => joinTournament(joinCodeInput)}
+            disabled={!joinCodeInput.trim() || isJoining}
+          >
+            {isJoining ? 'Bağlanılıyor...' : 'Katıl'}
+          </button>
+        </div>
+        {joinError && <p className="join-error">{joinError}</p>}
+        {!isFirebaseConfigured && (
+          <p className="join-info">Canlı takip özelliği bu ortamda yapılandırılmamış.</p>
+        )}
       </div>
 
       {currentView === 'participants' && (

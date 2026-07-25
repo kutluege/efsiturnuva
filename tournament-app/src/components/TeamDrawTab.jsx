@@ -1,158 +1,94 @@
-import { useState, useEffect } from 'react'
 import PotSelection from './PotSelection'
 import CoveredBall from './CoveredBall'
 import StirWheel from './StirWheel'
-import { TEAM_POTS, getRandomTeamsFromPot, getAllTeams } from '../data/TeamData'
+import { TEAM_POTS, getRandomTeamsFromPot } from '../data/TeamData'
+import { calculateLeaderboard } from '../utils/leaderboard'
 
-function TeamDrawTab({ tournament, onBack }) {
-  const [currentStep, setCurrentStep] = useState('pot-selection') // pot-selection, team-selection, stir-wheel, completed
-  const [selectedPot, setSelectedPot] = useState(null)
-  const [availableTeams, setAvailableTeams] = useState([])
-  const [selectedTeams, setSelectedTeams] = useState([])
-  const [revealedBalls, setRevealedBalls] = useState([])
-  const [drawCount, setDrawCount] = useState(0)
-  const [isStirWeek, setIsStirWeek] = useState(false)
-  const [stirWheelResult, setStirWheelResult] = useState(null)
-  
-  // Calculate current tournament week based on completed matches and check if it's a stir week (3 or 6)
-  useEffect(() => {
-    if (tournament) {
-      // Calculate completed rounds
-      let completedRounds = 0
-      for (let i = 0; i < tournament.rounds.length; i++) {
-        const round = tournament.rounds[i]
-        const allMatchesCompleted = round.every(match => match.completed)
-        if (allMatchesCompleted) {
-          completedRounds++
-        } else {
-          break // Stop at first incomplete round
-        }
-      }
-      
-      const currentWeek = completedRounds + 1
-      setIsStirWeek(currentWeek === 3 || currentWeek === 6)
-    }
-  }, [tournament])
+const DEFAULT_DRAW = {
+  currentStep: 'pot-selection',
+  selectedPot: null,
+  availableTeams: [],
+  selectedTeams: [],
+  revealedBalls: [],
+  drawCount: 0,
+  stirWheelResult: null
+}
+
+function TeamDrawTab({ tournament, draw, onDrawChange, isOwner = true, onBack }) {
+  const {
+    currentStep,
+    selectedPot,
+    availableTeams,
+    selectedTeams,
+    revealedBalls,
+    drawCount,
+    stirWheelResult
+  } = draw || DEFAULT_DRAW
 
   const handlePotSelected = (potKey) => {
-    setSelectedPot(potKey)
+    if (!isOwner) return
+
     const potTeams = TEAM_POTS[potKey].teams
     const participantCount = tournament ? tournament.participants.length : 4
     const randomTeams = getRandomTeamsFromPot(potKey, Math.min(participantCount, potTeams.length))
-    setAvailableTeams(randomTeams)
-    
+    onDrawChange({ selectedPot: potKey, availableTeams: randomTeams })
+
     setTimeout(() => {
-      setCurrentStep('team-selection')
+      onDrawChange({ currentStep: 'team-selection' })
     }, 1500)
   }
 
   const handleBallClick = (ballNumber) => {
-    if (revealedBalls.includes(ballNumber)) return
-    
-    setRevealedBalls([...revealedBalls, ballNumber])
-    
+    if (!isOwner || revealedBalls.includes(ballNumber)) return
+
+    const newRevealedBalls = [...revealedBalls, ballNumber]
+    onDrawChange({ revealedBalls: newRevealedBalls })
+
     // Check if all balls are revealed
-    if (revealedBalls.length + 1 === availableTeams.length) {
-      setSelectedTeams(availableTeams)
-      setDrawCount(drawCount + 1)
-      
+    if (newRevealedBalls.length === availableTeams.length) {
+      onDrawChange({ selectedTeams: availableTeams, drawCount: drawCount + 1 })
+
       // If it's a stir week and we have tournament data, show the wheel
       if (isStirWeek && tournament) {
         setTimeout(() => {
-          setCurrentStep('stir-wheel')
+          onDrawChange({ currentStep: 'stir-wheel' })
         }, 2000)
       } else {
         setTimeout(() => {
-          setCurrentStep('completed')
+          onDrawChange({ currentStep: 'completed' })
         }, 2000)
       }
     }
   }
 
   const handleWheelComplete = (result) => {
-    setStirWheelResult(result)
-    setCurrentStep('completed')
+    if (!isOwner) return
+    onDrawChange({ stirWheelResult: result, currentStep: 'completed' })
   }
 
   const handleNewDraw = () => {
-    setCurrentStep('pot-selection')
-    setSelectedPot(null)
-    setAvailableTeams([])
-    setSelectedTeams([])
-    setRevealedBalls([])
-    setStirWheelResult(null)
+    if (!isOwner) return
+    onDrawChange({
+      currentStep: 'pot-selection',
+      selectedPot: null,
+      availableTeams: [],
+      selectedTeams: [],
+      revealedBalls: [],
+      stirWheelResult: null
+    })
   }
 
   const handleTeamSwap = () => {
+    if (!isOwner) return
     // Open team swap interface for the wheel winner
     // This could be expanded to show all teams for selection
     alert(`${stirWheelResult?.player?.player?.name} can now select any team they want!`)
   }
 
-  // Calculate leaderboard for stir wheel
-  const getLeaderboard = () => {
-    if (!tournament) return []
-    
-    const standings = {}
-    
-    tournament.participants.forEach(participant => {
-      standings[participant.id] = {
-        player: participant,
-        points: 0,
-        wins: 0,
-        draws: 0,
-        losses: 0,
-        goalsFor: 0,
-        goalsAgainst: 0,
-        goalDifference: 0,
-        matches: []
-      }
-    })
-
-    tournament.rounds.forEach(round => {
-      round.forEach(match => {
-        if (match.completed && match.player2.id !== 'bye') {
-          const player1Stats = standings[match.player1.id]
-          const player2Stats = standings[match.player2.id]
-          
-          player1Stats.goalsFor += match.score.player1
-          player1Stats.goalsAgainst += match.score.player2
-          player2Stats.goalsFor += match.score.player2
-          player2Stats.goalsAgainst += match.score.player1
-
-          if (match.winner === 'draw') {
-            player1Stats.points += 1
-            player2Stats.points += 1
-            player1Stats.draws += 1
-            player2Stats.draws += 1
-          } else if (match.winner?.id === match.player1.id) {
-            player1Stats.points += 3
-            player1Stats.wins += 1
-            player2Stats.losses += 1
-          } else {
-            player2Stats.points += 3
-            player2Stats.wins += 1
-            player1Stats.losses += 1
-          }
-        }
-      })
-    })
-
-    Object.values(standings).forEach(stats => {
-      stats.goalDifference = stats.goalsFor - stats.goalsAgainst
-    })
-
-    return Object.values(standings).sort((a, b) => {
-      if (a.points !== b.points) return b.points - a.points
-      if (a.goalDifference !== b.goalDifference) return b.goalDifference - a.goalDifference
-      return b.goalsFor - a.goalsFor
-    })
-  }
-
   // Calculate current week based on completed rounds
   const getCurrentWeek = () => {
     if (!tournament) return 1
-    
+
     let completedRounds = 0
     for (let i = 0; i < tournament.rounds.length; i++) {
       const round = tournament.rounds[i]
@@ -163,11 +99,12 @@ function TeamDrawTab({ tournament, onBack }) {
         break
       }
     }
-    
+
     return completedRounds + 1
   }
-  
+
   const currentWeek = getCurrentWeek()
+  const isStirWeek = currentWeek === 3 || currentWeek === 6
 
   return (
     <div className="team-draw-tab">
@@ -185,6 +122,10 @@ function TeamDrawTab({ tournament, onBack }) {
         </div>
       </div>
 
+      {!isOwner && (
+        <div className="read-only-banner">Bu turnuvayı canlı takip ediyorsunuz (salt okunur)</div>
+      )}
+
       {isStirWeek && currentStep === 'pot-selection' && (
         <div className="stir-announcement">
           <h2>Time to stir things up! 😈</h2>
@@ -193,7 +134,7 @@ function TeamDrawTab({ tournament, onBack }) {
       )}
 
       {currentStep === 'pot-selection' && (
-        <PotSelection onPotSelected={handlePotSelected} />
+        <PotSelection onPotSelected={handlePotSelected} interactive={isOwner} />
       )}
 
       {currentStep === 'team-selection' && (
@@ -201,7 +142,7 @@ function TeamDrawTab({ tournament, onBack }) {
           <div className="selection-header">
             <h2>Team Selection</h2>
             <p>Selected Pot: <strong>{TEAM_POTS[selectedPot]?.name}</strong></p>
-            <p>Click the balls to reveal your teams!</p>
+            <p>{isOwner ? 'Click the balls to reveal your teams!' : 'Takımlar açılıyor...'}</p>
           </div>
 
           <div className="balls-container">
@@ -213,6 +154,7 @@ function TeamDrawTab({ tournament, onBack }) {
                 onBallClick={handleBallClick}
                 isRevealed={revealedBalls.includes(index + 1)}
                 isSelected={selectedTeams.includes(team)}
+                interactive={isOwner}
               />
             ))}
           </div>
@@ -220,7 +162,7 @@ function TeamDrawTab({ tournament, onBack }) {
           <div className="selection-progress">
             <p>{revealedBalls.length} of {availableTeams.length} teams revealed</p>
             <div className="progress-bar">
-              <div 
+              <div
                 className="progress-fill"
                 style={{ width: `${(revealedBalls.length / availableTeams.length) * 100}%` }}
               ></div>
@@ -230,10 +172,17 @@ function TeamDrawTab({ tournament, onBack }) {
       )}
 
       {currentStep === 'stir-wheel' && tournament && (
-        <StirWheel 
-          leaderboard={getLeaderboard()} 
-          onWheelComplete={handleWheelComplete}
-        />
+        isOwner ? (
+          <StirWheel
+            leaderboard={calculateLeaderboard(tournament)}
+            onWheelComplete={handleWheelComplete}
+          />
+        ) : (
+          <div className="stir-wheel-waiting">
+            <h2>Time to stir things up! 😈</h2>
+            <p>Çark döndürülüyor, sonuç bekleniyor...</p>
+          </div>
+        )
       )}
 
       {currentStep === 'completed' && (
@@ -247,7 +196,7 @@ function TeamDrawTab({ tournament, onBack }) {
           <div className="selected-teams-display">
             <h3>Your Teams from {TEAM_POTS[selectedPot]?.name}:</h3>
             <div className="teams-grid">
-              {selectedTeams.map((team, index) => (
+              {selectedTeams.map((team) => (
                 <div key={team.id} className="team-card">
                   <div className="team-badge">⚽</div>
                   <div className="team-info">
@@ -267,17 +216,21 @@ function TeamDrawTab({ tournament, onBack }) {
                 <br />
                 They can change their team to any team they want.
               </div>
-              <button className="btn-team-swap" onClick={handleTeamSwap}>
-                Change Team for {stirWheelResult.player.player.name}
-              </button>
+              {isOwner && (
+                <button className="btn-team-swap" onClick={handleTeamSwap}>
+                  Change Team for {stirWheelResult.player.player.name}
+                </button>
+              )}
             </div>
           )}
 
-          <div className="draw-actions">
-            <button className="btn-new-draw" onClick={handleNewDraw}>
-              Start New Draw
-            </button>
-          </div>
+          {isOwner && (
+            <div className="draw-actions">
+              <button className="btn-new-draw" onClick={handleNewDraw}>
+                Start New Draw
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,10 +1,10 @@
 import { useState } from 'react'
 
-function CoveredBall({ team, ballNumber, onBallClick, isRevealed, isSelected }) {
+function CoveredBall({ team, ballNumber, onBallClick, isRevealed, isSelected, interactive = true }) {
   const [isAnimating, setIsAnimating] = useState(false)
 
   const handleClick = () => {
-    if (isRevealed || isAnimating) return
+    if (!interactive || isRevealed || isAnimating) return
     
     setIsAnimating(true)
     setTimeout(() => {
@@ -14,8 +14,8 @@ function CoveredBall({ team, ballNumber, onBallClick, isRevealed, isSelected }) 
   }
 
   return (
-    <div 
-      className={`covered-ball ${isRevealed ? 'revealed' : ''} ${isSelected ? 'selected' : ''} ${isAnimating ? 'animating' : ''}`}
+    <div
+      className={`covered-ball ${isRevealed ? 'revealed' : ''} ${isSelected ? 'selected' : ''} ${isAnimating ? 'animating' : ''} ${!interactive ? 'read-only' : ''}`}
       onClick={handleClick}
     >
       <div className="ball-container">
