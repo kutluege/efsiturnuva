@@ -1438,7 +1438,8 @@ function TournamentScreen({
                 <span className="l">{t.form}</span>
                 <div className="form-pills">
                   {s.form.map((r, idx) => (
-                    <div key={idx} className={`form-pill ${r.toLowerCase()}`}>{r}</div>
+                    // Localized letter (TR: G/B/M, EN: W/D/L); CSS class stays w/d/l.
+                    <div key={idx} className={`form-pill ${r.toLowerCase()}`}>{t[r.toLowerCase()]}</div>
                   ))}
                 </div>
               </div>
