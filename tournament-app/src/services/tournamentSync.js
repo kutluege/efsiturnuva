@@ -1,4 +1,7 @@
-import { doc, setDoc, getDoc, onSnapshot, serverTimestamp } from 'firebase/firestore'
+import {
+  doc, setDoc, getDoc, onSnapshot, serverTimestamp,
+  collection, addDoc, query, orderBy, limit
+} from 'firebase/firestore'
 import { db, isFirebaseConfigured } from '../firebase'
 
 // League codes are 4-digit numbers; the code IS the Firestore document ID,
@@ -49,6 +52,32 @@ export async function createRemoteLeague(id, data) {
 export async function updateRemoteTournament(code, data) {
   if (!isFirebaseConfigured || !code) return
   await setDoc(doc(db, 'tournaments', code), { ...serializeLeague(data), updatedAt: serverTimestamp() }, { merge: true })
+}
+
+// ---- Viewer notes (feature: spectators leave a named note under the scoreboard) ----
+// Stored in a subcollection so viewers can append without touching the (admin-only)
+// main tournament document.
+
+export async function sendFanNote(code, { name, text }) {
+  if (!isFirebaseConfigured || !code) return false
+  await addDoc(collection(db, 'tournaments', code, 'messages'), {
+    name: String(name).slice(0, 30),
+    text: String(text).slice(0, 200),
+    createdAt: serverTimestamp()
+  })
+  return true
+}
+
+export function subscribeToFanNotes(code, onData) {
+  if (!isFirebaseConfigured || !code) return () => {}
+  const q = query(
+    collection(db, 'tournaments', code, 'messages'),
+    orderBy('createdAt', 'desc'),
+    limit(30)
+  )
+  return onSnapshot(q, snap => {
+    onData(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  }, err => console.error('[firebase] fan notes subscription failed', err))
 }
 
 export function subscribeToTournament(code, onData, onError) {

@@ -4,12 +4,14 @@ import TeamDrawTab from './components/TeamDrawTab'
 import { calculateLeaderboard } from './utils/leaderboard'
 import { loadAppState } from './utils/localPersistence'
 import { useAppPersistence } from './hooks/useTournamentPersistence'
-import { generateRounds, createDefaultDraw, createDefaultSettings, generateUniqueLeagueId } from './utils/fixtures'
+import { generateRounds, createDefaultDraw, createDefaultSettings, generateUniqueLeagueId, generateAdminKey } from './utils/fixtures'
 import { isFirebaseConfigured } from './firebase'
 import {
   createRemoteLeague, updateRemoteTournament, subscribeToTournament,
-  fetchRemoteLeague, joinCodeExists, isValidLeagueCode
+  fetchRemoteLeague, joinCodeExists, isValidLeagueCode,
+  sendFanNote, subscribeToFanNotes
 } from './services/tournamentSync'
+import { isEmailConfigured, sendAdminKeyEmail, openAdminKeyMailto } from './services/adminEmail'
 import { getCopy } from './i18n'
 
 const FAN_MESSAGES = [
@@ -101,7 +103,34 @@ function ChampionModal({ t, name, onClose }) {
   )
 }
 
-function HomeScreen({ t, leagues, onOpenLeague, onNewLeague, joinCodeInput, onJoinInput, joinError, isJoining, onJoin }) {
+function AdminKeyModal({ t, adminKey, emailStatus, onClose }) {
+  const [copied, setCopied] = useState(false)
+
+  const copyKey = () => {
+    navigator.clipboard.writeText(adminKey)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1600)
+  }
+
+  return (
+    <div className="sheet-overlay center">
+      <div className="champion-card">
+        <div className="kicker">{t.adminIdTitle}</div>
+        <div className="admin-key-value">{adminKey}</div>
+        <div className="note">{t.adminKeyModalNote}</div>
+        {emailStatus === 'sent' && <div className="admin-email-status ok">✓ {t.adminEmailSent}</div>}
+        {emailStatus === 'failed' && <div className="admin-email-status err">{t.adminEmailFailed}</div>}
+        {emailStatus === 'mailto' && <div className="admin-email-status">{t.adminEmailMailto}</div>}
+        <button className="btn-outline-block" style={{ marginBottom: 10 }} onClick={copyKey}>
+          {copied ? t.copied : t.copyKey}
+        </button>
+        <button onClick={onClose}>{t.close}</button>
+      </div>
+    </div>
+  )
+}
+
+function HomeScreen({ t, leagues, onOpenLeague, onNewLeague, joinCodeInput, onJoinInput, adminKeyInput, onAdminKeyInput, joinError, isJoining, onJoin }) {
   const list = Object.values(leagues).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
   const canJoin = isValidLeagueCode(joinCodeInput) && !isJoining
 
@@ -143,11 +172,20 @@ function HomeScreen({ t, leagues, onOpenLeague, onNewLeague, joinCodeInput, onJo
             maxLength={4}
           />
         </div>
+        <div className="join-form" style={{ marginTop: 8 }}>
+          <input
+            type="text"
+            value={adminKeyInput}
+            onChange={(e) => onAdminKeyInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+            placeholder={t.adminKeyPh}
+            maxLength={8}
+          />
+        </div>
         <div className="join-mode-row">
-          <button className="btn-outline-block" disabled={!canJoin} onClick={() => onJoin(joinCodeInput, 'resume')}>
+          <button className="btn-outline-block" disabled={!canJoin} onClick={() => onJoin(joinCodeInput, 'resume', adminKeyInput)}>
             {isJoining ? t.joining : t.resume}
           </button>
-          <button className="btn-outline-block" disabled={!canJoin} onClick={() => onJoin(joinCodeInput, 'watch')}>
+          <button className="btn-outline-block" disabled={!canJoin} onClick={() => onJoin(joinCodeInput, 'watch', adminKeyInput)}>
             {t.watch}
           </button>
         </div>
@@ -327,7 +365,7 @@ function MatchResultModal({ t, weekLabel, match, onResult, onClose }) {
       <div className="sheet">
         <div className="sheet-head">
           <div className="kicker">{weekLabel}</div>
-          <div className="title">{t.matchResult}</div>
+          <div className="title">{match.completed ? t.editScore : t.matchResult}</div>
         </div>
         <div className="score-grid">
           <div className="score-col">
@@ -422,11 +460,20 @@ function App() {
   const [participantCount, setParticipantCount] = useState(() => boot?.setupDraft?.participantCount ?? 4)
   const [matchType, setMatchType] = useState(() => boot?.setupDraft?.matchType ?? 'double')
   const [draftParticipants, setDraftParticipants] = useState(() => boot?.setupDraft?.participants ?? [])
+  const [creatorEmail, setCreatorEmail] = useState(() => boot?.setupDraft?.creatorEmail ?? '')
 
   const [joinCodeInput, setJoinCodeInput] = useState('')
+  const [adminKeyInput, setAdminKeyInput] = useState('')
   const [joinError, setJoinError] = useState('')
   const [isJoining, setIsJoining] = useState(false)
   const hasAutoJoined = useRef(false)
+
+  // Freshly created league: show the admin key once, with email delivery status.
+  const [adminKeyReveal, setAdminKeyReveal] = useState(null) // { adminKey, emailStatus }
+
+  // Viewer notes (feature: spectator name + note shown under the scoreboard)
+  const [fanName, setFanName] = useState(() => boot?.fanName ?? '')
+  const [fanNotes, setFanNotes] = useState([])
 
   const [activeTab, setActiveTab] = useState('tournament') // 'tournament' | 'team-draw'
   const [selectedMatch, setSelectedMatch] = useState(null)
@@ -446,9 +493,10 @@ function App() {
     lang,
     currentView: view,
     activeLeagueId,
-    setupDraft: { tournamentName, participantCount, matchType, participants: draftParticipants },
+    fanName,
+    setupDraft: { tournamentName, participantCount, matchType, participants: draftParticipants, creatorEmail },
     leagues
-  }), [lang, view, activeLeagueId, tournamentName, participantCount, matchType, draftParticipants, leagues])
+  }), [lang, view, activeLeagueId, fanName, tournamentName, participantCount, matchType, draftParticipants, creatorEmail, leagues])
 
   useAppPersistence(persistSnapshot)
 
@@ -490,6 +538,9 @@ function App() {
       }
     }
 
+    const adminKey = generateAdminKey()
+    const email = creatorEmail.trim()
+
     const league = {
       id,
       name: tournamentName.trim() || 'Turnuva',
@@ -501,6 +552,8 @@ function App() {
       settings: createDefaultSettings(),
       matchHistory: [],
       isOwner: true,
+      adminKey,
+      adminEmail: email,
       createdAt: Date.now(),
       updatedAt: Date.now()
     }
@@ -515,6 +568,20 @@ function App() {
     if (isFirebaseConfigured) {
       createRemoteLeague(id, league)
         .catch(err => console.error('[firebase] failed to create remote league', err))
+    }
+
+    // Deliver the admin key to the creator's email; always reveal it once in the UI too.
+    const emailPayload = { toEmail: email, leagueName: league.name, leagueId: id, adminKey }
+    if (email && isEmailConfigured) {
+      setAdminKeyReveal({ adminKey, emailStatus: 'pending' })
+      sendAdminKeyEmail(emailPayload)
+        .then(ok => setAdminKeyReveal({ adminKey, emailStatus: ok ? 'sent' : 'failed' }))
+        .catch(() => setAdminKeyReveal({ adminKey, emailStatus: 'failed' }))
+    } else if (email) {
+      openAdminKeyMailto(emailPayload)
+      setAdminKeyReveal({ adminKey, emailStatus: 'mailto' })
+    } else {
+      setAdminKeyReveal({ adminKey, emailStatus: null })
     }
   }
 
@@ -611,6 +678,19 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeLeagueId, activeLeague?.isOwner])
 
+  // Viewer notes: live from Firestore when configured, otherwise from the local league blob.
+  useEffect(() => {
+    if (!activeLeagueId) {
+      setFanNotes([])
+      return
+    }
+    if (isFirebaseConfigured) {
+      return subscribeToFanNotes(activeLeagueId, setFanNotes)
+    }
+    setFanNotes([...(leagues[activeLeagueId]?.fanNotes ?? [])].reverse())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLeagueId, isFirebaseConfigured ? null : leagues[activeLeagueId]?.fanNotes])
+
   // ---- Opening / joining leagues ----
 
   const openLeague = (id) => {
@@ -620,21 +700,39 @@ function App() {
     setJoinError('')
   }
 
-  const joinLeague = async (rawCode, mode) => {
+  const joinLeague = async (rawCode, mode, adminKeyAttempt = '') => {
     const code = rawCode.trim()
+    const keyAttempt = adminKeyAttempt.trim().toUpperCase()
+
     if (!isValidLeagueCode(code)) {
       setJoinError(t.joinNotFound)
       return
     }
 
-    // Saved on this device → just reopen it (with whatever role it was saved as).
-    if (leagues[code]) {
+    // Saved on this device → reopen. Resuming a league saved as viewer still
+    // requires the admin key (which upgrades it to owner).
+    const saved = leagues[code]
+    if (saved && (mode === 'watch' || saved.isOwner)) {
       openLeague(code)
+      return
+    }
+    if (saved && mode === 'resume' && saved.adminKey) {
+      if (keyAttempt === saved.adminKey) {
+        setLeagues(prev => ({ ...prev, [code]: { ...prev[code], isOwner: true } }))
+        openLeague(code)
+      } else {
+        setJoinError(keyAttempt ? t.adminKeyWrong : t.adminKeyRequired)
+      }
       return
     }
 
     if (!isFirebaseConfigured) {
       setJoinError(t.joinDisabled)
+      return
+    }
+
+    if (mode === 'resume' && !keyAttempt) {
+      setJoinError(t.adminKeyRequired)
       return
     }
 
@@ -645,6 +743,13 @@ function App() {
 
     if (!data) {
       setJoinError(t.joinNotFound)
+      return
+    }
+
+    // Resuming as manager: the entered admin key must match the one the league
+    // was created with. (Legacy leagues without a stored key stay open.)
+    if (mode === 'resume' && data.adminKey && data.adminKey !== keyAttempt) {
+      setJoinError(t.adminKeyWrong)
       return
     }
 
@@ -660,6 +765,7 @@ function App() {
     }
 
     setLeagues(prev => ({ ...prev, [code]: league }))
+    setAdminKeyInput('')
     openLeague(code)
   }
 
@@ -716,16 +822,35 @@ function App() {
 
   const sendFanMsg = () => {
     const text = fanDraft.trim()
-    if (!text) return
+    const name = fanName.trim()
+    if (!text || !name) return
     setFanDraft('')
-    pushToast(lang === 'tr' ? 'SEN' : 'YOU', text)
+    pushToast(name, text)
+
+    if (isFirebaseConfigured && activeLeagueId) {
+      sendFanNote(activeLeagueId, { name, text })
+        .catch(err => console.error('[firebase] failed to send fan note', err))
+    } else if (activeLeagueId) {
+      // Local-only fallback: keep notes inside the league blob on this device.
+      const note = { id: `n${Date.now()}`, name, text, createdAt: Date.now() }
+      setLeagues(prev => {
+        const current = prev[activeLeagueId]
+        if (!current) return prev
+        return {
+          ...prev,
+          [activeLeagueId]: { ...current, fanNotes: [...(current.fanNotes ?? []), note].slice(-30) }
+        }
+      })
+    }
   }
 
   // ---- Match result handling (score modal) ----
 
+  // Uncompleted matches can be scored by the admin; completed matches can also be
+  // RE-opened and corrected — but only by the admin (isOwner gate).
   const handleMatchClick = (roundIndex, match) => {
     if (!isOwner) return
-    if (!match.completed && match.player1.id !== 'bye' && match.player2.id !== 'bye') {
+    if (match.player1.id !== 'bye' && match.player2.id !== 'bye') {
       setSelectedMatch({ roundIndex, match })
     }
   }
@@ -906,6 +1031,8 @@ Lig detayları:
               onNewLeague={() => setView('setup')}
               joinCodeInput={joinCodeInput}
               onJoinInput={(v) => { setJoinCodeInput(v); setJoinError('') }}
+              adminKeyInput={adminKeyInput}
+              onAdminKeyInput={(v) => { setAdminKeyInput(v); setJoinError('') }}
               joinError={joinError}
               isJoining={isJoining}
               onJoin={joinLeague}
@@ -933,6 +1060,19 @@ Lig detayları:
                     onChange={(e) => setTournamentName(e.target.value)}
                     placeholder={t.tNamePh}
                   />
+                </div>
+
+                <div className="field-card">
+                  <label className="field-label">{t.creatorEmail}</label>
+                  <input
+                    type="email"
+                    className="text-input"
+                    value={creatorEmail}
+                    onChange={(e) => setCreatorEmail(e.target.value)}
+                    placeholder={t.creatorEmailPh}
+                    style={{ textTransform: 'none' }}
+                  />
+                  <div className="field-note">{t.creatorEmailNote}</div>
                 </div>
 
                 <div className="field-card">
@@ -986,6 +1126,9 @@ Lig detayları:
               statCards={statCards}
               fanDraft={fanDraft}
               onFanDraft={setFanDraft}
+              fanName={fanName}
+              onFanName={setFanName}
+              fanNotes={fanNotes}
               onSendFan={sendFanMsg}
               onMatchClick={handleMatchClick}
               onOpenSettings={() => setShowSettings(true)}
@@ -1050,6 +1193,15 @@ Lig detayları:
         />
       )}
 
+      {adminKeyReveal && (
+        <AdminKeyModal
+          t={t}
+          adminKey={adminKeyReveal.adminKey}
+          emailStatus={adminKeyReveal.emailStatus}
+          onClose={() => setAdminKeyReveal(null)}
+        />
+      )}
+
       {isChampionTime && (
         <ChampionModal t={t} name={leaderboard[0].player.name} onClose={() => setChampionDismissed(true)} />
       )}
@@ -1062,7 +1214,8 @@ Lig detayları:
 function TournamentScreen({
   t, league, leaderboard, tournamentCompleted, isOwner,
   currentWeek, playedCount, totalCount, nextMatch, nextMatchRound, statCards,
-  fanDraft, onFanDraft, onSendFan, onMatchClick, onOpenSettings, onOpenRoster, onCopyLink,
+  fanDraft, onFanDraft, fanName, onFanName, fanNotes, onSendFan,
+  onMatchClick, onOpenSettings, onOpenRoster, onCopyLink,
   onExportCsv, onShareEmail, onSaveImage
 }) {
   const [tab, setTab] = useState('table') // table | fixtures | stats
@@ -1091,7 +1244,10 @@ function TournamentScreen({
 
       {isOwner && (
         <div className="sync-banner">
-          <span>{t.leagueId}: <strong>#{league.id}</strong></span>
+          <span>
+            {t.leagueId}: <strong>#{league.id}</strong>
+            {league.adminKey && <> • {t.adminIdLabel}: <strong>{league.adminKey}</strong></>}
+          </span>
           {isFirebaseConfigured && <button onClick={onCopyLink}>{t.copyLink}</button>}
         </div>
       )}
@@ -1132,6 +1288,17 @@ function TournamentScreen({
             </div>
           </div>
 
+          <div className="notes-card">
+            <div className="section-label">{t.notesTitle}</div>
+            {fanNotes.length === 0 && <p className="notes-empty">{t.noNotes}</p>}
+            {fanNotes.map(note => (
+              <div key={note.id} className="note-row">
+                <span className="note-name">{note.name}</span>
+                <span className="note-text">{note.text}</span>
+              </div>
+            ))}
+          </div>
+
           <div className="next-card">
             <div className="section-label">{t.nextUp}</div>
             {nextMatch ? (
@@ -1150,6 +1317,15 @@ function TournamentScreen({
 
           <div className="fan-card">
             <div className="section-label on-dark">{t.fanMsgTitle}</div>
+            <div className="fan-form name">
+              <input
+                type="text"
+                value={fanName}
+                onChange={(e) => onFanName(e.target.value)}
+                placeholder={t.yourNamePh}
+                maxLength={30}
+              />
+            </div>
             <div className="fan-form">
               <input
                 type="text"
@@ -1157,8 +1333,9 @@ function TournamentScreen({
                 onChange={(e) => onFanDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') onSendFan() }}
                 placeholder={t.fanPh}
+                maxLength={200}
               />
-              <button onClick={onSendFan}>{t.send}</button>
+              <button onClick={onSendFan} disabled={!fanName.trim() || !fanDraft.trim()}>{t.send}</button>
             </div>
           </div>
         </>
@@ -1176,7 +1353,7 @@ function TournamentScreen({
               <div className="match-list">
                 {round.map(match => {
                   const isBye = match.player2.id === 'bye'
-                  const clickable = isOwner && !isBye && !match.completed
+                  const clickable = isOwner && !isBye
                   return (
                     <div
                       key={match.id}
@@ -1196,7 +1373,12 @@ function TournamentScreen({
                         {isBye
                           ? 'BYE'
                           : match.completed
-                            ? (match.winner === 'draw' ? t.drawnMatch : `${t.winnerPre}: ${match.winner.name}`)
+                            ? (
+                              <>
+                                {match.winner === 'draw' ? t.drawnMatch : `${t.winnerPre}: ${match.winner.name}`}
+                                {isOwner && <span className="edit-hint"> • ✎ {t.editScoreHint}</span>}
+                              </>
+                            )
                             : t.tapToScore}
                       </div>
                     </div>

@@ -6,10 +6,17 @@ function PotSelection({ onPotSelected, interactive = true, t: tProp }) {
   const t = tProp || getCopy('tr')
   const [isSelecting, setIsSelecting] = useState(false)
   const [selectedPot, setSelectedPot] = useState(null)
-  const [selectionMode, setSelectionMode] = useState('manual') // manual or random
+  const [expandedPot, setExpandedPot] = useState(null)
 
-  const handleManualPotClick = (potKey) => {
-    if (!interactive || isSelecting) return
+  // Tapping a pot card expands it and lists every team in that pot below;
+  // the actual pick happens with the explicit "select this pot" button.
+  const handleCardClick = (potKey) => {
+    if (isSelecting || selectedPot) return
+    setExpandedPot(prev => (prev === potKey ? null : potKey))
+  }
+
+  const handleManualPotSelect = (potKey) => {
+    if (!interactive || isSelecting || selectedPot) return
 
     setSelectedPot(potKey)
     setTimeout(() => {
@@ -21,7 +28,7 @@ function PotSelection({ onPotSelected, interactive = true, t: tProp }) {
     if (!interactive || isSelecting) return
 
     setIsSelecting(true)
-    setSelectionMode('random')
+    setExpandedPot(null)
 
     // Simulate random selection with animation
     let currentIndex = 0
@@ -47,23 +54,49 @@ function PotSelection({ onPotSelected, interactive = true, t: tProp }) {
   return (
     <div>
       <div className="pot-list">
-        {POT_KEYS.map((potKey) => (
-          <div
-            key={potKey}
-            className={`pot-card ${selectedPot === potKey ? 'selected' : ''} ${!interactive ? 'readonly' : ''}`}
-            onClick={() => (interactive && selectionMode === 'manual' && !selectedPot ? handleManualPotClick(potKey) : null)}
-          >
-            <div className="pot-card-head">
-              <span className="pot-name">{TEAM_POTS[potKey].name}</span>
-              <span className="pot-count">{TEAM_POTS[potKey].teams.length} {t.teamsUnit}</span>
+        {POT_KEYS.map((potKey) => {
+          const isExpanded = expandedPot === potKey
+          return (
+            <div
+              key={potKey}
+              className={`pot-card ${selectedPot === potKey ? 'selected' : ''} ${!interactive ? 'readonly' : ''}`}
+              onClick={() => handleCardClick(potKey)}
+            >
+              <div className="pot-card-head">
+                <span className="pot-name">{TEAM_POTS[potKey].name}</span>
+                <span className="pot-count">
+                  {TEAM_POTS[potKey].teams.length} {t.teamsUnit} {isExpanded ? '▲' : '▼'}
+                </span>
+              </div>
+              <div className="pot-preview">
+                {TEAM_POTS[potKey].teams.slice(0, 4).map((team) => (
+                  <span key={team.id} className="pot-chip">{team.name}</span>
+                ))}
+              </div>
+
+              {isExpanded && (
+                <div className="pot-full-list" onClick={(e) => e.stopPropagation()}>
+                  {TEAM_POTS[potKey].teams.map((team) => (
+                    <div key={team.id} className="pot-team-row">
+                      <span className="pot-team-name">{team.name}</span>
+                      <span className="pot-team-country">{team.country}</span>
+                      <span className="pot-team-overall">{team.overall}</span>
+                    </div>
+                  ))}
+                  {interactive && (
+                    <button
+                      className="btn-cta sm"
+                      style={{ marginTop: 10 }}
+                      onClick={() => handleManualPotSelect(potKey)}
+                    >
+                      {t.selectPot}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-            <div className="pot-preview">
-              {TEAM_POTS[potKey].teams.slice(0, 4).map((team) => (
-                <span key={team.id} className="pot-chip">{team.name}</span>
-              ))}
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {interactive && !isSelecting && !selectedPot && (
