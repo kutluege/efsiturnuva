@@ -123,8 +123,25 @@ Bu özellik [Firebase Firestore](https://firebase.google.com/) kullanır ve çal
          allow get: if true;
          allow list: if false;
          allow create: if code.matches('^[0-9]{4}$') && isValidTournamentDoc(request.resource.data);
-         allow update: if isValidTournamentDoc(request.resource.data);
+         // The admin key set at creation can never be changed afterwards.
+         allow update: if isValidTournamentDoc(request.resource.data)
+           && (!('adminKey' in resource.data)
+               || request.resource.data.adminKey == resource.data.adminKey);
          allow delete: if false;
+
+         // Viewer notes: anyone can read and append short named notes;
+         // nothing can be edited or deleted afterwards.
+         match /messages/{messageId} {
+           allow read: if true;
+           allow create: if request.resource.data.keys().hasAll(['name', 'text'])
+             && (request.resource.data.name is string)
+             && (request.resource.data.name.size() >= 1)
+             && (request.resource.data.name.size() <= 30)
+             && (request.resource.data.text is string)
+             && (request.resource.data.text.size() >= 1)
+             && (request.resource.data.text.size() <= 200);
+           allow update, delete: if false;
+         }
        }
        match /{document=**} { allow read, write: if false; }
      }
@@ -144,7 +161,23 @@ Bu özellik [Firebase Firestore](https://firebase.google.com/) kullanır ve çal
 
 Bu değişkenler ayarlanmazsa uygulama sorunsuz çalışmaya devam eder, sadece canlı takip özelliği devre dışı kalır (turnuva yine cihazınızda localStorage ile korunur).
 
-**Güvenlik notu:** Bu tasarımda kullanıcı girişi (Firebase Auth) yoktur — takip kodu, verinin kolayca tahmin edilememesini sağlayan paylaşılan bir sırdır, kriptografik bir erişim kontrolü değildir. Kodu bilen biri teorik olarak Firestore SDK'sını doğrudan çağırarak yazma da yapabilir. Gerçek "sahip" koruması istenirse ileride Firebase Anonymous Auth + `ownerUid` alanı eklenebilir.
+**Güvenlik notu:** Bu tasarımda kullanıcı girişi (Firebase Auth) yoktur. Lig kurulurken üretilen 8 haneli **Yönetici ID** yönetim yetkisini belirler: "Devam Et" için lig koduyla birlikte bu ID gerekir ve Firestore kuralları `adminKey` alanının sonradan değiştirilmesini engeller. Yine de doğrulama istemci tarafında yapıldığı için (doküman `get` ile okunabildiğinden) bu, kriptografik bir erişim kontrolü değil pratik bir korumadır. Gerçek "sahip" koruması istenirse ileride Firebase Anonymous Auth + `ownerUid` alanı eklenebilir.
+
+## Yönetici ID ve E-posta (EmailJS)
+
+Lig kuran kişiye otomatik olarak 8 haneli bir **Yönetici ID** atanır:
+
+- ID, lig kurulduğu anda ekranda bir kez gösterilir ve yönetici görünümündeki üst şeritte durur.
+- Skor girme, oynanmış maç skorunu düzeltme, kadro değiştirme ve kura çekme sadece bu ID ile ("Devam Et") mümkündür; kod ile katılanlar sadece izler.
+- Kurulum ekranına e-posta adresi girilirse ID bu adrese e-posta ile gönderilir.
+
+E-posta gönderimi için [EmailJS](https://www.emailjs.com) kullanılır (ücretsiz plan yeterli):
+
+1. EmailJS hesabı açın, bir **Email Service** bağlayın (ör. Gmail).
+2. Bir **Email Template** oluşturun; şablonda şu değişkenleri kullanın: `{{to_email}}` (alıcı), `{{league_name}}`, `{{league_id}}`, `{{admin_key}}`, `{{join_url}}`.
+3. `.env.local` dosyasına `VITE_EMAILJS_SERVICE_ID`, `VITE_EMAILJS_TEMPLATE_ID`, `VITE_EMAILJS_PUBLIC_KEY` değerlerini ekleyin (Vercel'de aynı değişkenleri Environment Variables kısmına da ekleyin).
+
+Bu değişkenler ayarlanmazsa uygulama, kullanıcının kendi posta uygulamasını `mailto:` ile açarak ID'yi içeren hazır bir e-posta oluşturur.
 
 ## Lisans
 

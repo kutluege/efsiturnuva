@@ -464,3 +464,48 @@ input:focus { outline: none; }
   border: 2px solid var(--ink); background: var(--ink); color: var(--paper);
   padding: 1px 6px; font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-right: 6px;
 }
+
+/* ---- New features: admin key, viewer notes, pot expansion ---- */
+
+.field-note { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+
+.admin-key-value {
+  font-family: Anton, sans-serif; font-size: 40px; line-height: 1; letter-spacing: 4px;
+  color: var(--red); margin: 10px 0; border: 3px dashed var(--ink); padding: 12px 8px;
+  background: var(--paper); user-select: all;
+}
+.admin-email-status { margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--ink-soft); }
+.admin-email-status.ok { color: #1a7a2e; }
+.admin-email-status.err { color: var(--red); }
+.champion-card .btn-outline-block { margin-top: 12px; }
+
+.notes-card { margin: 18px 18px 0; border: 3px solid var(--ink); background: var(--card); padding: 12px; }
+.notes-empty { font-size: 13px; font-weight: 600; color: var(--ink-soft); margin: 0; }
+.note-row {
+  display: flex; align-items: baseline; gap: 8px; padding: 7px 0;
+  border-bottom: 2px solid var(--ink-faint);
+}
+.note-row:last-child { border-bottom: none; }
+.note-name {
+  flex: none; font-family: Anton, sans-serif; font-size: 14px; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--red);
+}
+.note-text { font-size: 14px; font-weight: 600; color: var(--ink); word-break: break-word; }
+
+.fan-form.name { margin-bottom: 8px; }
+.fan-form button:disabled { opacity: .45; cursor: not-allowed; }
+
+.pot-full-list { margin-top: 10px; border-top: 3px solid var(--ink); padding-top: 8px; cursor: default; }
+.pot-team-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 2px;
+  border-bottom: 2px solid var(--ink-faint);
+}
+.pot-team-row:last-of-type { border-bottom: none; }
+.pot-team-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: var(--ink); text-transform: uppercase; }
+.pot-team-country { flex: none; font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-soft); }
+.pot-team-overall {
+  flex: none; width: 30px; text-align: center; border: 2px solid var(--ink); background: var(--ink);
+  color: var(--paper); font-family: Anton, sans-serif; font-size: 13px; padding: 1px 0;
+}
+
+.edit-hint { color: var(--red); font-weight: 700; }

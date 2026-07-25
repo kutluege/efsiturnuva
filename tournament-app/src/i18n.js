@@ -38,7 +38,26 @@ export const COPY = {
     rosterTitle: 'Kadroyu Yönet',
     rosterNote: 'Kadro değişince oynanmış maçlar geçmişe taşınır ve fikstür yeniden oluşturulur. İstatistikler korunur.',
     applyRoster: 'Kaydet ve Fikstürü Yenile',
-    history: 'Geçmiş Maçlar', navHome: 'Ligler'
+    history: 'Geçmiş Maçlar', navHome: 'Ligler',
+    // Admin key + email
+    creatorEmail: 'E-posta Adresin', creatorEmailPh: 'ornek@mail.com',
+    creatorEmailNote: 'Yönetici ID bu adrese gönderilecek.',
+    adminIdTitle: 'Yönetici ID', adminIdLabel: 'Yönetici ID',
+    adminKeyModalNote: 'Bu ID sadece sana özel. Ligde değişiklik yapmak (skor girmek, skor düzeltmek, kadro değiştirmek) için gerekli. Kaydet!',
+    adminEmailSent: 'Yönetici ID e-posta adresine gönderildi.',
+    adminEmailFailed: 'E-posta gönderilemedi — ID\'yi buradan kopyala.',
+    adminEmailMailto: 'E-posta servisi yapılandırılmadığı için posta uygulaman açıldı.',
+    copyKey: 'ID\'yi Kopyala', copied: 'Kopyalandı!',
+    adminKeyPh: 'Yönetici ID (Devam Et için)',
+    adminKeyWrong: 'Yönetici ID hatalı.',
+    adminKeyRequired: 'Yönetici olarak devam etmek için Yönetici ID gerekli.',
+    // Pot expansion
+    selectPot: 'Bu Potu Seç',
+    // Viewer notes
+    notesTitle: 'İzleyici Notları', noNotes: 'Henüz not yok. İlk notu sen bırak!',
+    yourName: 'Adın', yourNamePh: 'Adını yaz',
+    editScoreHint: 'Skoru düzeltmek için dokun',
+    editScore: 'Skoru Düzenle'
   },
   en: {
     tagline: 'Legends League', ticker: 'Table is live • the draw is on • who lifts the cup',
@@ -77,7 +96,26 @@ export const COPY = {
     rosterTitle: 'Manage Squad',
     rosterNote: 'Changing the squad archives played matches to history and rebuilds the fixtures. Stats are kept.',
     applyRoster: 'Save & Rebuild Fixtures',
-    history: 'Past Matches', navHome: 'Leagues'
+    history: 'Past Matches', navHome: 'Leagues',
+    // Admin key + email
+    creatorEmail: 'Your Email', creatorEmailPh: 'you@mail.com',
+    creatorEmailNote: 'The Admin ID will be sent to this address.',
+    adminIdTitle: 'Admin ID', adminIdLabel: 'Admin ID',
+    adminKeyModalNote: 'This ID is yours only. It is required to make changes to the league (enter scores, fix scores, change the squad). Save it!',
+    adminEmailSent: 'The Admin ID was emailed to your address.',
+    adminEmailFailed: 'Email could not be sent — copy the ID from here.',
+    adminEmailMailto: 'Email service is not configured, so your mail app was opened instead.',
+    copyKey: 'Copy ID', copied: 'Copied!',
+    adminKeyPh: 'Admin ID (needed to Resume)',
+    adminKeyWrong: 'Admin ID is incorrect.',
+    adminKeyRequired: 'An Admin ID is required to resume as manager.',
+    // Pot expansion
+    selectPot: 'Select This Pot',
+    // Viewer notes
+    notesTitle: 'Viewer Notes', noNotes: 'No notes yet. Be the first!',
+    yourName: 'Your Name', yourNamePh: 'Type your name',
+    editScoreHint: 'Tap to fix the score',
+    editScore: 'Edit Score'
   }
 }
 
