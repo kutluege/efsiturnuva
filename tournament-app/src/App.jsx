@@ -14,14 +14,6 @@ import {
 import { isEmailConfigured, sendAdminKeyEmail, openAdminKeyMailto } from './services/adminEmail'
 import { getCopy } from './i18n'
 
-const FAN_MESSAGES = [
-  { from: 'Emre', tr: 'Kutlu yine Pot 1 çekerse isyan var! 😤', en: 'If Kutlu draws Pot 1 again there will be riots! 😤' },
-  { from: 'Selin', tr: 'Ege bu hafta kupayı garantiler bence', en: 'Ege is locking the cup this week, calling it' },
-  { from: 'Barış', tr: 'Berk savunma yapmayı öğrenmiş 👏', en: 'Berk finally learned how to defend 👏' },
-  { from: 'Zeynep', tr: 'Çarkı çevir çarkı! ÇEVİR!', en: 'Spin the wheel! SPIN IT!' },
-  { from: 'Can', tr: 'Deniz averajla 3. olur, not alın', en: 'Deniz finishes 3rd on GD, mark my words' }
-]
-
 function SoccerBall({ dark }) {
   return (
     <div className={`soccer-ball ${dark ? 'dark' : ''}`}>
@@ -795,8 +787,9 @@ function App() {
     setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), 4000)
   }
 
+  // While on the draw tab, cycle the REAL viewer notes as side pop-ups.
   useEffect(() => {
-    if (activeTab !== 'team-draw' || view !== 'tournament') {
+    if (activeTab !== 'team-draw' || view !== 'tournament' || fanNotes.length === 0) {
       if (fanTimerRef.current) {
         clearInterval(fanTimerRef.current)
         fanTimerRef.current = null
@@ -805,9 +798,9 @@ function App() {
     }
     let i = 0
     const tick = () => {
-      const m = FAN_MESSAGES[i % FAN_MESSAGES.length]
+      const note = fanNotes[i % fanNotes.length]
       i++
-      pushToast(m.from, lang === 'tr' ? m.tr : m.en)
+      pushToast(note.name, note.text)
     }
     const startTimer = setTimeout(tick, 900)
     fanTimerRef.current = setInterval(tick, 4200)
@@ -818,7 +811,7 @@ function App() {
         fanTimerRef.current = null
       }
     }
-  }, [activeTab, view, lang])
+  }, [activeTab, view, fanNotes])
 
   const sendFanMsg = () => {
     const text = fanDraft.trim()
