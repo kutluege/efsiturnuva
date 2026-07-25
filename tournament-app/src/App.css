@@ -509,3 +509,10 @@ input:focus { outline: none; }
 }
 
 .edit-hint { color: var(--red); font-weight: 700; }
+
+/* Viewer notes: show ~5 rows at once, scroll for the rest */
+.notes-scroll { max-height: 188px; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.notes-scroll::-webkit-scrollbar { width: 8px; }
+.notes-scroll::-webkit-scrollbar-track { background: var(--ink-faint); }
+.notes-scroll::-webkit-scrollbar-thumb { background: var(--ink); }
+.notes-scroll { scrollbar-width: thin; scrollbar-color: var(--ink) var(--ink-faint); }

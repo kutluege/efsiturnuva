@@ -1284,12 +1284,16 @@ function TournamentScreen({
           <div className="notes-card">
             <div className="section-label">{t.notesTitle}</div>
             {fanNotes.length === 0 && <p className="notes-empty">{t.noNotes}</p>}
-            {fanNotes.map(note => (
-              <div key={note.id} className="note-row">
-                <span className="note-name">{note.name}</span>
-                <span className="note-text">{note.text}</span>
+            {fanNotes.length > 0 && (
+              <div className="notes-scroll">
+                {fanNotes.map(note => (
+                  <div key={note.id} className="note-row">
+                    <span className="note-name">{note.name}</span>
+                    <span className="note-text">{note.text}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
 
           <div className="next-card">
