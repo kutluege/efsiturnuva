@@ -516,3 +516,11 @@ input:focus { outline: none; }
 .notes-scroll::-webkit-scrollbar-track { background: var(--ink-faint); }
 .notes-scroll::-webkit-scrollbar-thumb { background: var(--ink); }
 .notes-scroll { scrollbar-width: thin; scrollbar-color: var(--ink) var(--ink-faint); }
+
+/* Close (X) button in sheet headers */
+.sheet-close {
+  position: absolute; top: 10px; right: 12px; width: 34px; height: 34px;
+  border: 2px solid var(--paper); background: transparent; color: var(--paper);
+  font-size: 16px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.sheet-close:hover { background: var(--red); border-color: var(--red); }

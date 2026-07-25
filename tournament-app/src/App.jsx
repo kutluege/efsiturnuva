@@ -394,6 +394,7 @@ function TournamentSettingsModal({ t, onClose }) {
       <div className="sheet scrollable">
         <div className="sheet-head">
           <div className="title">{t.rules}</div>
+          <button className="sheet-close" onClick={onClose} aria-label={t.close}>✕</button>
         </div>
         <div className="rules-body">
           <div className="points-grid">
