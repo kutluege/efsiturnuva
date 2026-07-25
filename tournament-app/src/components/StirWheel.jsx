@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
+import { getCopy } from '../i18n'
 
-function StirWheel({ leaderboard, onWheelComplete }) {
+function StirWheel({ leaderboard, onWheelComplete, t: tProp }) {
+  const t = tProp || getCopy('tr')
   const [isSpinning, setIsSpinning] = useState(false)
   const [selectedPlayer, setSelectedPlayer] = useState(null)
   const [wheelRotation, setWheelRotation] = useState(0)
@@ -62,26 +64,26 @@ function StirWheel({ leaderboard, onWheelComplete }) {
 
   const spinWheel = () => {
     if (isSpinning) return
-    
+
     setIsSpinning(true)
     setShowResult(false)
-    
+
     // Random number of rotations between 5-8 full spins plus final position
     const extraRotations = 5 + Math.random() * 3
     const finalRotation = wheelRotation + (extraRotations * 360)
-    
+
     setWheelRotation(finalRotation)
-    
+
     // After 3 seconds, determine winner and show result
     setTimeout(() => {
       const result = getWeightedRandomPlayer()
       setSelectedPlayer(result)
       setIsSpinning(false)
       setShowResult(true)
-      
+
       // Show confetti animation
       showConfetti()
-      
+
       // Notify parent component after showing result
       setTimeout(() => {
         onWheelComplete(result)
@@ -94,91 +96,61 @@ function StirWheel({ leaderboard, onWheelComplete }) {
     const timer = setTimeout(() => {
       spinWheel()
     }, 1000)
-    
+
     return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const getPositionText = (position) => {
-    switch(position) {
-      case 1: return '1st Place'
-      case 2: return '2nd Place'
-      case 3: return '3rd Place'  
-      case 4: return '4th Place'
-      default: return `${position}th Place`
-    }
-  }
+  const weights = [10, 20, 25, 45]
+  const topFour = leaderboard.slice(0, 4)
+  const segAngle = 360 / Math.max(1, Math.min(4, topFour.length))
 
   return (
-    <div className="stir-wheel-container">
-      <div className="stir-header">
-        <h2>Time to stir things up! 😈</h2>
-        <p>The wheel is spinning to select who can change their team...</p>
-      </div>
+    <div className="wheel-screen">
+      <div className="title">{t.stirTitle}</div>
+      <div className="sub">{t.stirSub}</div>
 
-      <div className="wheel-section">
-        <div className="wheel-wrapper">
-          <div 
-            className={`wheel ${isSpinning ? 'spinning' : ''}`}
-            style={{ transform: `rotate(${wheelRotation}deg)` }}
-          >
-            {leaderboard.slice(0, 4).map((player, index) => {
-              const angle = (360 / Math.min(4, leaderboard.length)) * index
-              const weights = [10, 20, 25, 45] // 1st: 10%, 2nd: 20%, 3rd: 25%, 4th: 45%
-              return (
-                <div 
-                  key={player.player.id}
-                  className="wheel-segment"
-                  style={{ 
-                    transform: `rotate(${angle}deg)`,
-                    '--segment-color': `hsl(${120 + index * 60}, 70%, 50%)`
-                  }}
-                >
-                  <div className="segment-content">
-                    <div className="player-name">{player.player.name}</div>
-                    <div className="probability">{weights[index]}%</div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-          
-          <div className="wheel-pointer">📍</div>
-        </div>
-
-        {isSpinning && (
-          <div className="spinning-status">
-            <div className="spinner"></div>
-            <p>Spinning the wheel...</p>
-          </div>
-        )}
-      </div>
-
-      {showResult && selectedPlayer && (
-        <div className="wheel-result">
-          <div className="result-announcement">
-            <div className="winner-icon">🎯</div>
-            <h3>{selectedPlayer.player.player.name} is selected!</h3>
-            <p className="position-info">
-              Current position: {getPositionText(selectedPlayer.position)}
-            </p>
-            <p className="probability-info">
-              Had a {selectedPlayer.probability}% chance of being selected
-            </p>
-            <div className="result-description">
-              <strong>{selectedPlayer.player.player.name}</strong>, you can switch teams to any team you choose!
+      <div className="wheel-outer">
+        <div className="wheel-disc" style={{ transform: `rotate(${wheelRotation}deg)` }}>
+          {topFour.map((player, index) => (
+            <div
+              key={player.player.id}
+              className={`wheel-segment ${index % 2 ? 'odd' : 'even'}`}
+              style={{ transform: `rotate(${index * segAngle}deg)` }}
+            >
+              <div className="wheel-segment-inner" style={{ transform: `translateY(-50%) rotate(${-index * segAngle}deg)` }}>
+                <div className="n">{player.player.name}</div>
+                <div className="p">{weights[index]}%</div>
+              </div>
             </div>
-          </div>
+          ))}
+        </div>
+        <div className="wheel-pointer-tri" />
+        <div className="wheel-center">EF</div>
+      </div>
+
+      {isSpinning && (
+        <div style={{ marginTop: 14, color: 'var(--ink-soft)', fontWeight: 600 }}>
+          <div className="spinner" style={{ margin: '0 auto 8px' }} />
         </div>
       )}
 
-      <div className="stir-info">
-        <h4>How it works:</h4>
-        <ul>
-          <li>1st place: 10% chance</li>
-          <li>2nd place: 20% chance</li>
-          <li>3rd place: 25% chance</li>
-          <li>4th place: 45% chance</li>
-        </ul>
+      {showResult && selectedPlayer && (
+        <div className="wheel-result-card">
+          <div className="kicker">{t.wheelPicked}</div>
+          <div className="winner">{selectedPlayer.player.player.name}</div>
+          <div className="note">{selectedPlayer.probability}% — {t.howItWorks}</div>
+        </div>
+      )}
+
+      <div className="how-card">
+        <div className="title">{t.howItWorks}</div>
+        <div className="how-grid">
+          <div className="how-cell"><div className="v">10%</div><div className="l">1.</div></div>
+          <div className="how-cell"><div className="v">20%</div><div className="l">2.</div></div>
+          <div className="how-cell"><div className="v">25%</div><div className="l">3.</div></div>
+          <div className="how-cell"><div className="v">45%</div><div className="l">4.</div></div>
+        </div>
       </div>
     </div>
   )
