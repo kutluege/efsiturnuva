@@ -1,5 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
+import { getAuth } from 'firebase/auth'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -15,12 +16,14 @@ export const isFirebaseConfigured = Boolean(
 )
 
 let db = null
+let auth = null
 
 if (isFirebaseConfigured) {
   const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig)
   db = getFirestore(app)
+  auth = getAuth(app)
 } else if (import.meta.env.DEV) {
-  console.warn('[firebase] VITE_FIREBASE_* env vars missing — running in local-only mode; the live "follow" feature is disabled.')
+  console.warn('[firebase] VITE_FIREBASE_* env vars missing — running in local-only mode; live follow and email sign-in are disabled.')
 }
 
-export { db }
+export { db, auth }
