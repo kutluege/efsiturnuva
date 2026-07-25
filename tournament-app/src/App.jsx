@@ -990,6 +990,7 @@ Lig detayları:
       points: p.points,
       played,
       gpg: played ? (p.goalsFor / played).toFixed(1) : '0.0',
+      cpg: played ? (p.goalsAgainst / played).toFixed(1) : '0.0',
       winPct: played ? Math.round((p.wins / played) * 100) : 0,
       form: p.matches.slice(-5).map(m => (m.result === 'win' ? 'W' : m.result === 'draw' ? 'D' : 'L'))
     }
@@ -1430,6 +1431,7 @@ function TournamentScreen({
                 <div className="stat-cell pts"><div className="v">{s.points}</div><div className="l">{t.pts}</div></div>
                 <div className="stat-cell"><div className="v">{s.played}</div><div className="l">{t.played}</div></div>
                 <div className="stat-cell"><div className="v">{s.gpg}</div><div className="l">{t.gpg}</div></div>
+                <div className="stat-cell"><div className="v">{s.cpg}</div><div className="l">{t.cpg}</div></div>
                 <div className="stat-cell"><div className="v">{s.winPct}%</div><div className="l">{t.winRate}</div></div>
               </div>
               <div className="stat-form-row">
