@@ -7,8 +7,12 @@ Champions League formatında turnuva organize etmek için geliştirilmiş modern
 - 🏆 Champions League formatında eleme sistemi
 - 📱 Responsive tasarım (mobil uyumlu)
 - 🇹🇷 Türkçe arayüz
-- 💾 Otomatik veri kaydetme (localStorage) — sayfa yenilense bile turnuva ve skorlar korunur
-- 🔑 Turnuva oluşturulduğunda otomatik takip kodu — bu kodu bilen herkes turnuvayı canlı (salt okunur) izleyebilir
+- 💾 Otomatik veri kaydetme (localStorage) — sayfa yenilense bile ligler ve skorlar korunur
+- 🔢 Her lige otomatik 4 haneli lig kodu — sonraki girişlerde bu kodla lige devam edilebilir
+- 🏟️ Birden fazla lig kaydı: ana ekrandan kayıtlı liglere geri dönülebilir
+- 👥 Lig sürerken oyuncu ekleme/çıkarma — oynanmış maçlar geçmişe taşınır, fikstür yeniden oluşturulur, istatistikler korunur
+- 📜 Geçmiş maçlar görünümü ve kadro değişimlerinden bağımsız oyuncu istatistikleri
+- 🔑 Lig kodunu bilen herkes ligi canlı izleyebilir ya da (Firebase yapılandırıldıysa) başka cihazdan yönetici olarak devam edebilir
 - 📧 Email ile paylaşım
 - ⚙️ Turnuva kuralları ayarlama
 - 🎨 Modern ve kullanıcı dostu tasarım
@@ -104,7 +108,7 @@ background: linear-gradient(135deg, #f7b801 0%, #ffc107 50%, #ffdb4d 100%);
 
 ## Canlı Takip (Firebase)
 
-Bir turnuva oluşturduğunuzda uygulama otomatik olarak 6 haneli bir **takip kodu** üretir. Bu kodu paylaştığınız kişiler, ana sayfadaki "Bir Turnuvayı Takip Et" alanına (veya size gönderilen `?join=KOD` bağlantısına) girerek turnuvayı gerçek zamanlı ve salt okunur olarak izleyebilir.
+Bir lig oluşturduğunuzda uygulama otomatik olarak 4 haneli bir **lig kodu** üretir. Bu kodu paylaştığınız kişiler, ana sayfadaki "Bir Lige Katıl" alanına (veya size gönderilen `?join=KOD` bağlantısına) girerek ligi gerçek zamanlı izleyebilir ("Canlı İzle") ya da başka bir cihazdan yönetici olarak devam edebilir ("Devam Et").
 
 Bu özellik [Firebase Firestore](https://firebase.google.com/) kullanır ve çalışması için kendi ücretsiz Firebase projenizi oluşturmanız gerekir:
 
@@ -118,17 +122,19 @@ Bu özellik [Firebase Firestore](https://firebase.google.com/) kullanır ve çal
        match /tournaments/{code} {
          allow get: if true;
          allow list: if false;
-         allow create: if code.matches('^[A-Z0-9]{6}$') && isValidTournamentDoc(request.resource.data);
+         allow create: if code.matches('^[0-9]{4}$') && isValidTournamentDoc(request.resource.data);
          allow update: if isValidTournamentDoc(request.resource.data);
          allow delete: if false;
        }
        match /{document=**} { allow read, write: if false; }
      }
      function isValidTournamentDoc(data) {
-       return data.keys().hasAll(['name','participants','rounds','currentRound'])
-         && data.name is string && data.name.size() < 200
-         && data.participants is list && data.participants.size() <= 32
-         && data.rounds is list;
+       return data.keys().hasAll(['name', 'participants', 'rounds', 'currentRound'])
+         && (data.name is string)
+         && (data.name.size() < 200)
+         && (data.participants is list)
+         && (data.participants.size() <= 32)
+         && (data.rounds is list);
      }
    }
    ```

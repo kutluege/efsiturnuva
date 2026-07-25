@@ -1,13 +1,233 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import './App.css'
 import TeamDrawTab from './components/TeamDrawTab'
 import { calculateLeaderboard } from './utils/leaderboard'
-import { loadLocalState } from './utils/localPersistence'
-import { useTournamentPersistence } from './hooks/useTournamentPersistence'
+import { loadAppState } from './utils/localPersistence'
+import { useAppPersistence } from './hooks/useTournamentPersistence'
+import { generateRounds, createDefaultDraw, createDefaultSettings, generateUniqueLeagueId } from './utils/fixtures'
 import { isFirebaseConfigured } from './firebase'
-import { createRemoteTournament, updateRemoteTournament, subscribeToTournament, joinCodeExists } from './services/tournamentSync'
+import {
+  createRemoteLeague, updateRemoteTournament, subscribeToTournament,
+  fetchRemoteLeague, joinCodeExists, isValidLeagueCode
+} from './services/tournamentSync'
+import { getCopy } from './i18n'
 
-function ParticipantManager({ participants, participantCount, onAddParticipant, onRemoveParticipant, onGenerateTournament, onBack }) {
+const FAN_MESSAGES = [
+  { from: 'Emre', tr: 'Kutlu yine Pot 1 çekerse isyan var! 😤', en: 'If Kutlu draws Pot 1 again there will be riots! 😤' },
+  { from: 'Selin', tr: 'Ege bu hafta kupayı garantiler bence', en: 'Ege is locking the cup this week, calling it' },
+  { from: 'Barış', tr: 'Berk savunma yapmayı öğrenmiş 👏', en: 'Berk finally learned how to defend 👏' },
+  { from: 'Zeynep', tr: 'Çarkı çevir çarkı! ÇEVİR!', en: 'Spin the wheel! SPIN IT!' },
+  { from: 'Can', tr: 'Deniz averajla 3. olur, not alın', en: 'Deniz finishes 3rd on GD, mark my words' }
+]
+
+function SoccerBall({ dark }) {
+  return (
+    <div className={`soccer-ball ${dark ? 'dark' : ''}`}>
+      <div className="p p1" />
+      <div className="p p2" />
+      <div className="p p3" />
+    </div>
+  )
+}
+
+function Header({ lang, t, onSetLang }) {
+  return (
+    <div className="app-header">
+      <div className="logo-badge">EF</div>
+      <div className="brand-block">
+        <div className="brand-title">EFSİ <span className="accent">LİG</span></div>
+        <div className="brand-tagline">{t.tagline}</div>
+      </div>
+      <div className="lang-toggle">
+        <button className={`lang-btn ${lang === 'tr' ? 'active' : ''}`} onClick={() => onSetLang('tr')}>TR</button>
+        <button className={`lang-btn ${lang === 'en' ? 'active' : ''}`} onClick={() => onSetLang('en')}>EN</button>
+      </div>
+    </div>
+  )
+}
+
+function Ticker({ t }) {
+  const group = (
+    <div className="ticker-group">
+      <span>{t.ticker}</span><span>★</span><span>{t.ticker}</span><span>★</span>
+    </div>
+  )
+  return (
+    <div className="ticker">
+      <div className="ticker-track">
+        {group}
+        {group}
+      </div>
+    </div>
+  )
+}
+
+function BottomNav({ t, activeScreen, onGoTournament, onGoDraw, onGoHome }) {
+  return (
+    <div className="bottom-nav">
+      <button className={`nav-btn ${activeScreen === 'tournament' ? 'active' : ''}`} onClick={onGoTournament}>{t.navTable}</button>
+      <button className={`nav-btn ${activeScreen === 'team-draw' ? 'active' : ''}`} onClick={onGoDraw}>{t.navDraw}</button>
+      <button className="nav-btn" onClick={onGoHome}>{t.navHome}</button>
+    </div>
+  )
+}
+
+function ToastStack({ toasts }) {
+  return (
+    <div className="toast-stack">
+      {toasts.map(toast => (
+        <div key={toast.id} className={`toast ${toast.out ? 'out' : ''}`}>
+          <div className="toast-head">
+            <div className="toast-avatar" />
+            <span className="toast-from">{toast.from}</span>
+          </div>
+          <div className="toast-text">{toast.text}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ChampionModal({ t, name, onClose }) {
+  return (
+    <div className="sheet-overlay center">
+      <div className="champion-card">
+        <div className="kicker">{t.championKicker}</div>
+        <div className="name">{name}</div>
+        <div className="note">{t.championNote}</div>
+        <button onClick={onClose}>{t.close}</button>
+      </div>
+    </div>
+  )
+}
+
+function HomeScreen({ t, leagues, onOpenLeague, onNewLeague, joinCodeInput, onJoinInput, joinError, isJoining, onJoin }) {
+  const list = Object.values(leagues).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+  const canJoin = isValidLeagueCode(joinCodeInput) && !isJoining
+
+  return (
+    <>
+      <div className="screen-pad">
+        <div className="eyebrow">{t.homeKicker}</div>
+        <h1 className="screen-title">{t.myLeagues}</h1>
+        <div className="rule-bar" />
+      </div>
+
+      <div className="league-list">
+        {list.length === 0 && <p className="join-info">{t.noLeagues}</p>}
+        {list.map(l => (
+          <div key={l.id} className="league-row" onClick={() => onOpenLeague(l.id)}>
+            <div className="league-id-badge">#{l.id}</div>
+            <div className="league-info">
+              <div className="league-name">{l.name}</div>
+              <div className="league-meta">
+                {l.participants.length} {t.playersUnit} • {l.isOwner ? t.managerChip : t.viewerChip}
+              </div>
+            </div>
+            <span className="league-open">→</span>
+          </div>
+        ))}
+        <button className="btn-cta" onClick={onNewLeague}>+ {t.newLeague}</button>
+      </div>
+
+      <div className="join-card">
+        <h2>{t.joinTitle}</h2>
+        <p>{t.joinHelp}</p>
+        <div className="join-form">
+          <input
+            type="text"
+            inputMode="numeric"
+            value={joinCodeInput}
+            onChange={(e) => onJoinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            placeholder={t.joinCodePh}
+            maxLength={4}
+          />
+        </div>
+        <div className="join-mode-row">
+          <button className="btn-outline-block" disabled={!canJoin} onClick={() => onJoin(joinCodeInput, 'resume')}>
+            {isJoining ? t.joining : t.resume}
+          </button>
+          <button className="btn-outline-block" disabled={!canJoin} onClick={() => onJoin(joinCodeInput, 'watch')}>
+            {t.watch}
+          </button>
+        </div>
+        {joinError && <p className="join-error">{joinError}</p>}
+        {!isFirebaseConfigured && <p className="join-info">{t.joinLocalNote}</p>}
+      </div>
+    </>
+  )
+}
+
+function RosterModal({ t, league, onApply, onClose }) {
+  const [players, setPlayers] = useState(league.participants)
+  const [newName, setNewName] = useState('')
+
+  const addPlayer = () => {
+    const name = newName.trim()
+    if (!name) return
+    setPlayers([...players, { id: Date.now(), name }])
+    setNewName('')
+  }
+
+  const removePlayer = (id) => {
+    setPlayers(players.filter(p => p.id !== id))
+  }
+
+  const changed = players.length !== league.participants.length ||
+    players.some((p, i) => p.id !== league.participants[i]?.id)
+
+  return (
+    <div className="sheet-overlay">
+      <div className="sheet scrollable">
+        <div className="sheet-head">
+          <div className="kicker">#{league.id}</div>
+          <div className="title">{t.rosterTitle}</div>
+        </div>
+        <div className="rules-body">
+          <div className="roster-note">{t.rosterNote}</div>
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <input
+              type="text"
+              className="text-input plain"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') addPlayer() }}
+              placeholder={t.partPh}
+              maxLength={20}
+            />
+            <button
+              onClick={addPlayer}
+              disabled={!newName.trim()}
+              style={{ width: 84, height: 52, border: '3px solid var(--ink)', background: 'var(--ink)', color: 'var(--paper)', fontFamily: 'Anton, sans-serif', fontSize: 19, textTransform: 'uppercase', cursor: 'pointer', flex: 'none' }}
+            >
+              {t.add}
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {players.map(player => (
+              <div key={player.id} className="participant-row">
+                <div className="participant-avatar">{player.name.charAt(0).toUpperCase()}</div>
+                <span className="participant-name">{player.name}</span>
+                <button className="btn-remove-chip" onClick={() => removePlayer(player.id)}>✕</button>
+              </div>
+            ))}
+          </div>
+
+          <div className="sheet-actions-2" style={{ padding: 0 }}>
+            <button className="btn-cancel" onClick={onClose}>{t.cancel}</button>
+            <button className="btn-save" onClick={() => onApply(players)} disabled={players.length < 2 || !changed}>
+              {t.applyRoster}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ParticipantManager({ t, participants, participantCount, onAddParticipant, onRemoveParticipant, onGenerateTournament, onBack }) {
   const [newParticipantName, setNewParticipantName] = useState('')
 
   const handleAddParticipant = () => {
@@ -21,79 +241,80 @@ function ParticipantManager({ participants, participantCount, onAddParticipant, 
     }
   }
 
+  const fillPct = Math.min(100, Math.round((participants.length / Math.max(1, participantCount)) * 100))
+  const canGenerate = participants.length === participantCount
+
   return (
-    <div className="participant-manager">
-      <button className="btn-back" onClick={onBack}>← Geri</button>
-      
-      <h2>Katılımcıları Ekle</h2>
-      
-      <div className="add-participant">
-        <input
-          type="text"
-          value={newParticipantName}
-          onChange={(e) => setNewParticipantName(e.target.value)}
-          onKeyPress={handleKeyPress}
-          placeholder="Katılımcı adı girin"
-          maxLength={20}
-        />
-        <button 
-          onClick={handleAddParticipant}
-          disabled={!newParticipantName.trim() || participants.length >= participantCount}
-          className="btn-add"
-        >
-          Ekle
+    <>
+      <div className="screen-pad">
+        <button className="btn-outline" style={{ marginBottom: 14 }} onClick={onBack}>← {t.back}</button>
+        <div className="eyebrow">{t.step2}</div>
+        <h1 className="screen-title sm">{t.partTitle}</h1>
+      </div>
+
+      <div style={{ padding: '12px 18px 0' }}>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <input
+            type="text"
+            className="text-input plain"
+            value={newParticipantName}
+            onChange={(e) => setNewParticipantName(e.target.value)}
+            onKeyDown={handleKeyPress}
+            placeholder={t.partPh}
+            maxLength={20}
+          />
+          <button
+            onClick={handleAddParticipant}
+            disabled={!newParticipantName.trim() || participants.length >= participantCount}
+            style={{ width: 84, height: 54, border: '3px solid var(--ink)', background: 'var(--ink)', color: 'var(--paper)', fontFamily: 'Anton, sans-serif', fontSize: 19, textTransform: 'uppercase', cursor: 'pointer', flex: 'none' }}
+          >
+            {t.add}
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
+          {participants.map(participant => (
+            <div key={participant.id} className="participant-row">
+              <div className="participant-avatar">{participant.name.charAt(0).toUpperCase()}</div>
+              <span className="participant-name">{participant.name}</span>
+              <button className="btn-remove-chip" onClick={() => onRemoveParticipant(participant.id)}>✕</button>
+            </div>
+          ))}
+        </div>
+
+        <div className="progress-row">
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${fillPct}%` }} />
+          </div>
+          <div className="progress-label">{participants.length}/{participantCount}</div>
+        </div>
+
+        <button className="btn-cta" style={{ marginTop: 16 }} onClick={onGenerateTournament} disabled={!canGenerate}>
+          🏆 {t.drawLots}
         </button>
       </div>
-
-      <div className="participants-list">
-        {participants.map(participant => (
-          <div key={participant.id} className="participant-item">
-            <span className="participant-icon">👤</span>
-            <span className="participant-name">{participant.name}</span>
-            <button 
-              onClick={() => onRemoveParticipant(participant.id)}
-              className="btn-remove"
-            >
-              Çıkar
-            </button>
-          </div>
-        ))}
-      </div>
-
-      <div className="participant-status">
-        {participants.length}/{participantCount} katılımcı eklendi
-      </div>
-
-      <button 
-        className="btn-generate"
-        onClick={onGenerateTournament}
-        disabled={participants.length !== participantCount}
-      >
-        Kuraları Çek
-      </button>
-    </div>
+    </>
   )
 }
 
-function MatchResultModal({ match, onResult, onClose }) {
-  const [score1, setScore1] = useState('')
-  const [score2, setScore2] = useState('')
+function MatchResultModal({ t, weekLabel, match, onResult, onClose }) {
+  const [score1, setScore1] = useState(match.completed ? String(match.score.player1) : '')
+  const [score2, setScore2] = useState(match.completed ? String(match.score.player2) : '')
 
   const handleSubmit = () => {
     if (score1 !== '' && score2 !== '') {
       const s1 = parseInt(score1)
       const s2 = parseInt(score2)
-      
-      // Automatically determine winner based on scores
+
       let winner = null
       if (s1 > s2) {
         winner = match.player1.id
       } else if (s2 > s1) {
         winner = match.player2.id
       } else {
-        winner = 'draw' // It's a draw
+        winner = 'draw'
       }
-      
+
       onResult(winner, {
         player1: s1,
         player2: s2
@@ -102,152 +323,405 @@ function MatchResultModal({ match, onResult, onClose }) {
   }
 
   return (
-    <div className="modal-overlay">
-      <div className="modal">
-        <h3>Maç Sonucu</h3>
-        <div className="match-info">
-          <div className="players">
-            <span>{match.player1.name}</span>
-            <span>vs</span>
-            <span>{match.player2.name}</span>
+    <div className="sheet-overlay">
+      <div className="sheet">
+        <div className="sheet-head">
+          <div className="kicker">{weekLabel}</div>
+          <div className="title">{t.matchResult}</div>
+        </div>
+        <div className="score-grid">
+          <div className="score-col">
+            <div className="p-name">{match.player1.name}</div>
+            <input type="number" min="0" value={score1} onChange={(e) => setScore1(e.target.value)} />
+          </div>
+          <div className="score-colon">:</div>
+          <div className="score-col">
+            <div className="p-name">{match.player2.name}</div>
+            <input type="number" min="0" value={score2} onChange={(e) => setScore2(e.target.value)} />
           </div>
         </div>
-
-        <div className="score-inputs">
-          <div className="score-group">
-            <label>{match.player1.name} Skoru</label>
-            <input
-              type="number"
-              min="0"
-              value={score1}
-              onChange={(e) => setScore1(e.target.value)}
-            />
-          </div>
-          <div className="score-group">
-            <label>{match.player2.name} Skoru</label>
-            <input
-              type="number"
-              min="0"
-              value={score2}
-              onChange={(e) => setScore2(e.target.value)}
-            />
-          </div>
-        </div>
-
-
-        <div className="modal-actions">
-          <button className="btn-cancel" onClick={onClose}>İptal</button>
-          <button 
-            className="btn-confirm" 
-            onClick={handleSubmit}
-            disabled={score1 === '' || score2 === ''}
-          >
-            Kaydet
-          </button>
+        <div className="sheet-actions-2">
+          <button className="btn-cancel" onClick={onClose}>{t.cancel}</button>
+          <button className="btn-save" onClick={handleSubmit} disabled={score1 === '' || score2 === ''}>{t.save}</button>
         </div>
       </div>
     </div>
   )
 }
 
-function TournamentSettingsModal({ onClose }) {
+function TournamentSettingsModal({ t, onClose }) {
+  const [rules, setRules] = useState({ tie: 'no', avg: 'yes', goals: 'yes', tiebreak: 'duo' })
+
+  const toggles = [
+    { key: 'tie', label: t.ruleTie, a: 'yes', b: 'no', aLabel: t.yes, bLabel: t.no },
+    { key: 'avg', label: t.ruleAvg, a: 'yes', b: 'no', aLabel: t.yes, bLabel: t.no },
+    { key: 'goals', label: t.ruleGoals, a: 'yes', b: 'no', aLabel: t.yes, bLabel: t.no },
+    { key: 'tiebreak', label: t.ruleTiebreak, a: 'duo', b: 'general', aLabel: t.duo, bLabel: t.general }
+  ]
+
   return (
-    <div className="modal-overlay">
-      <div className="modal settings-modal">
-        <h3>Turnuva Kuralları</h3>
-        
-        <div className="settings-content">
-          <div className="setting-item">
-            <label>Galibiyet Puanı</label>
-            <input type="number" defaultValue="3" readOnly />
-          </div>
-          <div className="setting-item">
-            <label>Beraberlik Puanı</label>
-            <input type="number" defaultValue="1" readOnly />
-          </div>
-          <div className="setting-item">
-            <label>Mağlubiyet Puanı</label>
-            <input type="number" defaultValue="0" readOnly />
-          </div>
-          
-          <div className="setting-item">
-            <label>Maçlar Berabere Bitebilir</label>
-            <div className="toggle-group">
-              <label className="radio-option">
-                <input type="radio" name="tie" value="yes" />
-                Evet
-              </label>
-              <label className="radio-option">
-                <input type="radio" name="tie" value="no" defaultChecked />
-                Hayır
-              </label>
-            </div>
-          </div>
-
-          <div className="setting-item">
-            <label>Tabloda Averaj Farkını Göster</label>
-            <div className="toggle-group">
-              <label className="radio-option">
-                <input type="radio" name="averaj" value="yes" defaultChecked />
-                Evet
-              </label>
-              <label className="radio-option">
-                <input type="radio" name="averaj" value="no" />
-                Hayır
-              </label>
-            </div>
-          </div>
-
-          <div className="setting-item">
-            <label>Tabloda Atılan/Yenilen Alanlarını Göster</label>
-            <div className="toggle-group">
-              <label className="radio-option">
-                <input type="radio" name="goals" value="yes" defaultChecked />
-                Evet
-              </label>
-              <label className="radio-option">
-                <input type="radio" name="goals" value="no" />
-                Hayır
-              </label>
-            </div>
-          </div>
-
-          <div className="setting-item">
-            <label>Puan Eşitliğinde Averaj Sistemi</label>
-            <div className="toggle-group">
-              <label className="radio-option">
-                <input type="radio" name="tiebreaker" value="two" defaultChecked />
-                İkili
-              </label>
-              <label className="radio-option">
-                <input type="radio" name="tiebreaker" value="general" />
-                Genel
-              </label>
-            </div>
-          </div>
-
-          <div className="email-section">
-            <h4>Email Bildirimi</h4>
-            <p>Turnuvanın aktif edilmesi ve gerekli bilgilerin gönderilmesi için email adresinizi girmeniz gerekmektedir.</p>
-            <div className="form-group">
-              <label>Email</label>
-              <input type="email" placeholder="Email adresinizi girin" />
-            </div>
-          </div>
+    <div className="sheet-overlay">
+      <div className="sheet scrollable">
+        <div className="sheet-head">
+          <div className="title">{t.rules}</div>
         </div>
+        <div className="rules-body">
+          <div className="points-grid">
+            <div className="point-box"><div className="v">3</div><div className="l">{t.winPts}</div></div>
+            <div className="point-box"><div className="v">1</div><div className="l">{t.drawPts}</div></div>
+            <div className="point-box"><div className="v">0</div><div className="l">{t.lossPts}</div></div>
+          </div>
 
-        <div className="modal-actions">
-          <button className="btn-confirm" onClick={onClose}>Gönder</button>
+          {toggles.map(r => (
+            <div key={r.key} className="rule-card">
+              <div className="label">{r.label}</div>
+              <div className="segmented">
+                <button
+                  className={`segment-btn ${rules[r.key] === r.a ? 'active' : ''}`}
+                  onClick={() => setRules(prev => ({ ...prev, [r.key]: r.a }))}
+                >
+                  {r.aLabel}
+                </button>
+                <button
+                  className={`segment-btn ${rules[r.key] === r.b ? 'active' : ''}`}
+                  onClick={() => setRules(prev => ({ ...prev, [r.key]: r.b }))}
+                >
+                  {r.bLabel}
+                </button>
+              </div>
+            </div>
+          ))}
+
+          <div className="email-box">
+            <div className="title">{t.emailTitle}</div>
+            <div className="note">{t.emailNote}</div>
+            <input type="email" placeholder={t.emailPh} />
+          </div>
+
+          <button className="btn-cta sm" onClick={onClose}>{t.saveRules}</button>
         </div>
       </div>
     </div>
   )
 }
 
-function TournamentView({ tournament, onBack, onUpdateMatch, onUpdateDraw, isOwner, syncCode }) {
+function App() {
+  const [boot] = useState(() => loadAppState())
+
+  const [lang, setLang] = useState(() => boot?.lang ?? 'tr')
+  const [leagues, setLeagues] = useState(() => boot?.leagues ?? {})
+  const [activeLeagueId, setActiveLeagueId] = useState(() => boot?.activeLeagueId ?? null)
+  const [view, setView] = useState(() => {
+    const stored = boot?.currentView
+    if (stored === 'tournament' && boot?.activeLeagueId && boot?.leagues?.[boot.activeLeagueId]) return 'tournament'
+    if (stored && stored !== 'tournament') return stored
+    return 'home'
+  })
+
+  const [tournamentName, setTournamentName] = useState(() => boot?.setupDraft?.tournamentName ?? '')
+  const [participantCount, setParticipantCount] = useState(() => boot?.setupDraft?.participantCount ?? 4)
+  const [matchType, setMatchType] = useState(() => boot?.setupDraft?.matchType ?? 'double')
+  const [draftParticipants, setDraftParticipants] = useState(() => boot?.setupDraft?.participants ?? [])
+
+  const [joinCodeInput, setJoinCodeInput] = useState('')
+  const [joinError, setJoinError] = useState('')
+  const [isJoining, setIsJoining] = useState(false)
+  const hasAutoJoined = useRef(false)
+
+  const [activeTab, setActiveTab] = useState('tournament') // 'tournament' | 'team-draw'
   const [selectedMatch, setSelectedMatch] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
-  const [currentTab, setCurrentTab] = useState('tournament') // tournament, team-draw
+  const [showRoster, setShowRoster] = useState(false)
+  const [championDismissed, setChampionDismissed] = useState(false)
+  const [toasts, setToasts] = useState([])
+  const [fanDraft, setFanDraft] = useState('')
+  const fanTimerRef = useRef(null)
+
+  const t = getCopy(lang)
+  const activeLeague = activeLeagueId ? leagues[activeLeagueId] : null
+  const isOwner = activeLeague?.isOwner ?? true
+
+  const persistSnapshot = useMemo(() => ({
+    version: 2,
+    lang,
+    currentView: view,
+    activeLeagueId,
+    setupDraft: { tournamentName, participantCount, matchType, participants: draftParticipants },
+    leagues
+  }), [lang, view, activeLeagueId, tournamentName, participantCount, matchType, draftParticipants, leagues])
+
+  useAppPersistence(persistSnapshot)
+
+  const mutateActiveLeague = (updater) => {
+    if (!activeLeagueId) return
+    setLeagues(prev => {
+      const current = prev[activeLeagueId]
+      if (!current) return prev
+      return { ...prev, [activeLeagueId]: { ...updater(current), updatedAt: Date.now() } }
+    })
+  }
+
+  // ---- Setup draft handlers ----
+
+  const addParticipant = (name) => {
+    if (name.trim() && draftParticipants.length < participantCount) {
+      setDraftParticipants([...draftParticipants, { id: Date.now(), name: name.trim() }])
+    }
+  }
+
+  const removeParticipant = (id) => {
+    setDraftParticipants(draftParticipants.filter(p => p.id !== id))
+  }
+
+  // ---- League creation ----
+
+  const createLeague = async () => {
+    if (draftParticipants.length !== participantCount) return
+
+    const shuffled = [...draftParticipants].sort(() => Math.random() - 0.5)
+    const rounds = generateRounds(shuffled, matchType)
+
+    let id = generateUniqueLeagueId(Object.keys(leagues))
+    if (isFirebaseConfigured) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const taken = await joinCodeExists(id).catch(() => false)
+        if (!taken) break
+        id = generateUniqueLeagueId([...Object.keys(leagues), id])
+      }
+    }
+
+    const league = {
+      id,
+      name: tournamentName.trim() || 'Turnuva',
+      participants: shuffled,
+      rounds,
+      matchType,
+      currentRound: 0,
+      draw: createDefaultDraw(),
+      settings: createDefaultSettings(),
+      matchHistory: [],
+      isOwner: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+
+    setLeagues(prev => ({ ...prev, [id]: league }))
+    setActiveLeagueId(id)
+    setView('tournament')
+    setActiveTab('tournament')
+    setChampionDismissed(false)
+    setDraftParticipants([])
+
+    if (isFirebaseConfigured) {
+      createRemoteLeague(id, league)
+        .catch(err => console.error('[firebase] failed to create remote league', err))
+    }
+  }
+
+  // ---- Match / draw updates (owner-only, funnel through the leagues map) ----
+
+  const updateMatchResult = (roundIndex, matchId, winnerId, score) => {
+    if (!isOwner) return
+    mutateActiveLeague(league => {
+      const updatedRounds = [...league.rounds]
+      const round = [...updatedRounds[roundIndex]]
+      const matchIndex = round.findIndex(m => m.id === matchId)
+
+      if (matchIndex >= 0) {
+        const match = round[matchIndex]
+        let winner = null
+
+        if (winnerId === 'draw') {
+          winner = 'draw'
+        } else if (winnerId === match.player1.id) {
+          winner = match.player1
+        } else {
+          winner = match.player2
+        }
+
+        round[matchIndex] = { ...match, winner, completed: true, score }
+        updatedRounds[roundIndex] = round
+      }
+
+      return { ...league, rounds: updatedRounds }
+    })
+  }
+
+  const updateDraw = (partialDraw) => {
+    if (!isOwner) return
+    mutateActiveLeague(league => ({ ...league, draw: { ...league.draw, ...partialDraw } }))
+  }
+
+  // ---- Squad changes: archive played matches, rebuild fixtures ----
+
+  const applyRosterChange = (newPlayers) => {
+    if (!isOwner) return
+    mutateActiveLeague(league => {
+      const archived = []
+      league.rounds.forEach((round, roundIndex) => round.forEach(match => {
+        if (match.completed && match.player1.id !== 'bye' && match.player2.id !== 'bye') {
+          archived.push({
+            ...match,
+            id: `h-${(league.matchHistory?.length ?? 0) + archived.length}-${match.id}`,
+            week: roundIndex + 1,
+            archivedAt: Date.now()
+          })
+        }
+      }))
+
+      const shuffled = [...newPlayers].sort(() => Math.random() - 0.5)
+
+      return {
+        ...league,
+        participants: shuffled,
+        rounds: generateRounds(shuffled, league.matchType || 'double'),
+        matchHistory: [...(league.matchHistory ?? []), ...archived],
+        draw: createDefaultDraw()
+      }
+    })
+    setShowRoster(false)
+    setChampionDismissed(false)
+  }
+
+  // ---- Firebase sync ----
+
+  // Owner write-through: push every league change to Firestore.
+  useEffect(() => {
+    if (!isFirebaseConfigured || !activeLeague || !activeLeague.isOwner) return
+    const timer = setTimeout(() => {
+      updateRemoteTournament(activeLeague.id, activeLeague)
+        .catch(err => console.error('[firebase] failed to sync league', err))
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [activeLeague])
+
+  // Follower subscription: keep watched leagues live.
+  useEffect(() => {
+    if (!activeLeagueId || !activeLeague || activeLeague.isOwner) return
+    const unsubscribe = subscribeToTournament(
+      activeLeagueId,
+      data => setLeagues(prev => {
+        const current = prev[activeLeagueId]
+        if (!current) return prev
+        return { ...prev, [activeLeagueId]: { ...current, ...data, id: activeLeagueId, isOwner: false, updatedAt: Date.now() } }
+      }),
+      () => setJoinError(t.joinNotFound)
+    )
+    return unsubscribe
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLeagueId, activeLeague?.isOwner])
+
+  // ---- Opening / joining leagues ----
+
+  const openLeague = (id) => {
+    setActiveLeagueId(id)
+    setView('tournament')
+    setActiveTab('tournament')
+    setJoinError('')
+  }
+
+  const joinLeague = async (rawCode, mode) => {
+    const code = rawCode.trim()
+    if (!isValidLeagueCode(code)) {
+      setJoinError(t.joinNotFound)
+      return
+    }
+
+    // Saved on this device → just reopen it (with whatever role it was saved as).
+    if (leagues[code]) {
+      openLeague(code)
+      return
+    }
+
+    if (!isFirebaseConfigured) {
+      setJoinError(t.joinDisabled)
+      return
+    }
+
+    setIsJoining(true)
+    setJoinError('')
+    const data = await fetchRemoteLeague(code).catch(() => null)
+    setIsJoining(false)
+
+    if (!data) {
+      setJoinError(t.joinNotFound)
+      return
+    }
+
+    const league = {
+      matchHistory: [],
+      draw: createDefaultDraw(),
+      settings: createDefaultSettings(),
+      matchType: 'double',
+      ...data,
+      id: code,
+      isOwner: mode === 'resume',
+      updatedAt: Date.now()
+    }
+
+    setLeagues(prev => ({ ...prev, [code]: league }))
+    openLeague(code)
+  }
+
+  // Auto-join if the page was opened via a shared ?join=CODE link (watch mode).
+  useEffect(() => {
+    if (hasAutoJoined.current) return
+    hasAutoJoined.current = true
+    const codeFromUrl = new URLSearchParams(window.location.search).get('join')
+    if (codeFromUrl && isValidLeagueCode(codeFromUrl)) {
+      setJoinCodeInput(codeFromUrl)
+      setView('home')
+      joinLeague(codeFromUrl, 'watch')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    setChampionDismissed(false)
+  }, [activeLeagueId])
+
+  // ---- Fan message toasts (decorative, per-browser only — not synced) ----
+
+  const pushToast = (from, text) => {
+    const id = `t${Date.now()}-${Math.random()}`
+    setToasts(prev => [...prev, { id, from, text, out: false }])
+    setTimeout(() => setToasts(prev => prev.map(x => (x.id === id ? { ...x, out: true } : x))), 3400)
+    setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), 4000)
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'team-draw' || view !== 'tournament') {
+      if (fanTimerRef.current) {
+        clearInterval(fanTimerRef.current)
+        fanTimerRef.current = null
+      }
+      return
+    }
+    let i = 0
+    const tick = () => {
+      const m = FAN_MESSAGES[i % FAN_MESSAGES.length]
+      i++
+      pushToast(m.from, lang === 'tr' ? m.tr : m.en)
+    }
+    const startTimer = setTimeout(tick, 900)
+    fanTimerRef.current = setInterval(tick, 4200)
+    return () => {
+      clearTimeout(startTimer)
+      if (fanTimerRef.current) {
+        clearInterval(fanTimerRef.current)
+        fanTimerRef.current = null
+      }
+    }
+  }, [activeTab, view, lang])
+
+  const sendFanMsg = () => {
+    const text = fanDraft.trim()
+    if (!text) return
+    setFanDraft('')
+    pushToast(lang === 'tr' ? 'SEN' : 'YOU', text)
+  }
+
+  // ---- Match result handling (score modal) ----
 
   const handleMatchClick = (roundIndex, match) => {
     if (!isOwner) return
@@ -258,22 +732,17 @@ function TournamentView({ tournament, onBack, onUpdateMatch, onUpdateDraw, isOwn
 
   const handleMatchResult = (winnerId, score) => {
     if (selectedMatch) {
-      onUpdateMatch(selectedMatch.roundIndex, selectedMatch.match.id, winnerId, score)
+      updateMatchResult(selectedMatch.roundIndex, selectedMatch.match.id, winnerId, score)
       setSelectedMatch(null)
     }
   }
 
-  // Check if tournament is completed
-  const isTournamentCompleted = () => {
-    return tournament.rounds.every(round => 
-      round.every(match => match.completed)
-    )
-  }
+  // ---- Export / share helpers ----
 
   const exportToExcel = () => {
-    let csvContent = "Turnuva: " + tournament.name + "\n\n"
-    
-    tournament.rounds.forEach((round, roundIndex) => {
+    let csvContent = 'Turnuva: ' + activeLeague.name + '\n\n'
+
+    activeLeague.rounds.forEach((round, roundIndex) => {
       csvContent += `${roundIndex + 1}. HAFTA\n`
       round.forEach(match => {
         if (match.player2.id === 'bye') {
@@ -283,17 +752,17 @@ function TournamentView({ tournament, onBack, onUpdateMatch, onUpdateDraw, isOwn
           if (match.completed) {
             csvContent += ` - Kazanan: ${match.winner.name}`
           }
-          csvContent += "\n"
+          csvContent += '\n'
         }
       })
-      csvContent += "\n"
+      csvContent += '\n'
     })
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement("a")
+    const link = document.createElement('a')
     const url = URL.createObjectURL(blob)
-    link.setAttribute("href", url)
-    link.setAttribute("download", `${tournament.name}_turnuva.csv`)
+    link.setAttribute('href', url)
+    link.setAttribute('download', `${activeLeague.name}_turnuva.csv`)
     link.style.visibility = 'hidden'
     document.body.appendChild(link)
     link.click()
@@ -301,19 +770,18 @@ function TournamentView({ tournament, onBack, onUpdateMatch, onUpdateDraw, isOwn
   }
 
   const shareViaEmail = () => {
-    const tournamentUrl = syncCode
-      ? `${window.location.origin}${window.location.pathname}?join=${syncCode}`
-      : window.location.href
-    const subject = encodeURIComponent(`${tournament.name} Turnuva Takibi`)
-    const codeLine = syncCode ? `\nTakip Kodu: ${syncCode}\n` : ''
+    const leagueUrl = `${window.location.origin}${window.location.pathname}?join=${activeLeague.id}`
+    const subject = encodeURIComponent(`${activeLeague.name} Turnuva Takibi`)
     const body = encodeURIComponent(`Merhaba,
 
-${tournament.name} turnuvasını canlı olarak takip edebilirsiniz:
-${tournamentUrl}
-${codeLine}
-Turnuva detayları:
-- Katılımcı Sayısı: ${tournament.participants.length}
-- Toplam Hafta: ${tournament.rounds.length}
+${activeLeague.name} ligini canlı olarak takip edebilirsiniz:
+${leagueUrl}
+
+Lig Kodu: ${activeLeague.id}
+
+Lig detayları:
+- Katılımcı Sayısı: ${activeLeague.participants.length}
+- Toplam Hafta: ${activeLeague.rounds.length}
 
 İyi maçlar!`)
 
@@ -323,173 +791,246 @@ Turnuva detayları:
   const downloadAsImage = () => {
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
-    
+
     canvas.width = 800
     canvas.height = 600
-    
-    ctx.fillStyle = '#f4c430'
+
+    ctx.fillStyle = '#F3EDE1'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-    
-    ctx.fillStyle = '#333'
+
+    ctx.fillStyle = '#12100F'
     ctx.font = 'bold 24px Arial'
     ctx.textAlign = 'center'
-    
-    ctx.fillText(tournament.name, canvas.width / 2, 40)
-    
+
+    ctx.fillText(activeLeague.name, canvas.width / 2, 40)
+
     let yPos = 80
-    tournament.rounds.forEach((round, roundIndex) => {
+    activeLeague.rounds.forEach((round, roundIndex) => {
       ctx.font = 'bold 18px Arial'
       ctx.fillText(`${roundIndex + 1}. HAFTA`, canvas.width / 2, yPos)
       yPos += 30
-      
+
       ctx.font = '14px Arial'
       round.forEach(match => {
-        const matchText = match.player2.id === 'bye' ? 
-          `${match.player1.name} - BYE` : 
+        const matchText = match.player2.id === 'bye' ?
+          `${match.player1.name} - BYE` :
           `${match.player1.name} vs ${match.player2.name}${match.completed ? ` (Kazanan: ${match.winner.name})` : ''}`
-        
+
         ctx.fillText(matchText, canvas.width / 2, yPos)
         yPos += 25
       })
       yPos += 20
     })
-    
+
     const link = document.createElement('a')
-    link.download = `${tournament.name}_turnuva.png`
+    link.download = `${activeLeague.name}_turnuva.png`
     link.href = canvas.toDataURL()
     link.click()
   }
 
-  const leaderboard = calculateLeaderboard(tournament)
-  const tournamentCompleted = isTournamentCompleted()
+  // ---- Derived view data ----
 
-  if (currentTab === 'team-draw') {
-    return (
-      <TeamDrawTab
-        tournament={tournament}
-        draw={tournament.draw}
-        onDrawChange={onUpdateDraw}
-        isOwner={isOwner}
-        onBack={() => setCurrentTab('tournament')}
-      />
-    )
+  const leaderboard = activeLeague ? calculateLeaderboard(activeLeague) : []
+  const tournamentCompleted = activeLeague ? activeLeague.rounds.every(round => round.every(match => match.completed)) : false
+  const showNav = view === 'tournament' && !!activeLeague
+
+  const currentWeek = activeLeague
+    ? (() => {
+        let completedRounds = 0
+        for (const round of activeLeague.rounds) {
+          if (round.every(m => m.completed)) completedRounds++
+          else break
+        }
+        return Math.min(completedRounds + 1, activeLeague.rounds.length)
+      })()
+    : 1
+
+  let nextMatch = null
+  let nextMatchRound = -1
+  if (activeLeague) {
+    activeLeague.rounds.forEach((round, ri) => {
+      round.forEach(m => {
+        if (!nextMatch && !m.completed) {
+          nextMatch = m
+          nextMatchRound = ri
+        }
+      })
+    })
+  }
+
+  const playedCount = activeLeague ? activeLeague.rounds.reduce((n, r) => n + r.filter(m => m.completed).length, 0) : 0
+  const totalCount = activeLeague ? activeLeague.rounds.reduce((n, r) => n + r.length, 0) : 0
+
+  const statCards = leaderboard.map((p, i) => {
+    const played = p.wins + p.draws + p.losses
+    return {
+      id: p.player.id,
+      name: p.player.name,
+      initial: p.player.name.charAt(0).toUpperCase(),
+      rank: i + 1,
+      points: p.points,
+      played,
+      gpg: played ? (p.goalsFor / played).toFixed(1) : '0.0',
+      winPct: played ? Math.round((p.wins / played) * 100) : 0,
+      form: p.matches.slice(-5).map(m => (m.result === 'win' ? 'W' : m.result === 'draw' ? 'D' : 'L'))
+    }
+  })
+
+  const isChampionTime = tournamentCompleted && !championDismissed && leaderboard.length > 0
+
+  const goHome = () => {
+    setView('home')
+    setJoinError('')
   }
 
   return (
-    <div className="tournament-view">
-      <div className="tournament-header">
-        <button className="btn-back" onClick={onBack}>← Geri</button>
-        <h1>{tournament.name}</h1>
-        <div className="header-actions">
-          <button className="btn-tab" onClick={() => setCurrentTab('team-draw')}>🎯 Team Draw</button>
-          {isOwner && (
-            <button className="btn-settings" onClick={() => setShowSettings(true)}>⚙️</button>
+    <div className="page-bg">
+      <div className="decor">
+        <div className="decor-ball b1"><SoccerBall /></div>
+        <div className="decor-ball b2"><SoccerBall /></div>
+        <div className="decor-ball b3"><SoccerBall /></div>
+        <div className="decor-ball b4"><SoccerBall dark /></div>
+      </div>
+
+      <div className="app-frame">
+        <Header lang={lang} t={t} onSetLang={setLang} />
+        <Ticker t={t} />
+
+        <div className={`app-content ${showNav ? 'has-nav' : ''}`}>
+
+          {view === 'home' && (
+            <HomeScreen
+              t={t}
+              leagues={leagues}
+              onOpenLeague={openLeague}
+              onNewLeague={() => setView('setup')}
+              joinCodeInput={joinCodeInput}
+              onJoinInput={(v) => { setJoinCodeInput(v); setJoinError('') }}
+              joinError={joinError}
+              isJoining={isJoining}
+              onJoin={joinLeague}
+            />
+          )}
+
+          {view === 'setup' && (
+            <>
+              <div className="screen-pad">
+                {Object.keys(leagues).length > 0 && (
+                  <button className="btn-outline" style={{ marginBottom: 14 }} onClick={goHome}>← {t.myLeagues}</button>
+                )}
+                <div className="eyebrow">{t.step1}</div>
+                <h1 className="screen-title">{t.setupTitle}</h1>
+                <div className="rule-bar" />
+              </div>
+
+              <div className="form-stack">
+                <div className="field-card">
+                  <label className="field-label">{t.tName}</label>
+                  <input
+                    type="text"
+                    className="text-input"
+                    value={tournamentName}
+                    onChange={(e) => setTournamentName(e.target.value)}
+                    placeholder={t.tNamePh}
+                  />
+                </div>
+
+                <div className="field-card">
+                  <label className="field-label">{t.tCount}</label>
+                  <div className="stepper">
+                    <button className="stepper-btn" onClick={() => setParticipantCount(Math.max(2, participantCount - 1))}>–</button>
+                    <div className="stepper-value"><span>{participantCount}</span></div>
+                    <button className="stepper-btn" onClick={() => setParticipantCount(Math.min(16, participantCount + 1))}>+</button>
+                  </div>
+                </div>
+
+                <div className="field-card">
+                  <label className="field-label">{t.tMode}</label>
+                  <div className="segmented">
+                    <button className={`segment-btn ${matchType === 'single' ? 'active' : ''}`} onClick={() => setMatchType('single')}>{t.single}</button>
+                    <button className={`segment-btn ${matchType === 'double' ? 'active' : ''}`} onClick={() => setMatchType('double')}>{t.double}</button>
+                  </div>
+                </div>
+
+                <button className="btn-cta" onClick={() => setView('participants')}>
+                  {t.next} <span style={{ fontSize: 20 }}>→</span>
+                </button>
+              </div>
+            </>
+          )}
+
+          {view === 'participants' && (
+            <ParticipantManager
+              t={t}
+              participants={draftParticipants}
+              participantCount={participantCount}
+              onAddParticipant={addParticipant}
+              onRemoveParticipant={removeParticipant}
+              onGenerateTournament={createLeague}
+              onBack={() => setView('setup')}
+            />
+          )}
+
+          {view === 'tournament' && activeLeague && activeTab === 'tournament' && (
+            <TournamentScreen
+              t={t}
+              league={activeLeague}
+              leaderboard={leaderboard}
+              tournamentCompleted={tournamentCompleted}
+              isOwner={isOwner}
+              currentWeek={currentWeek}
+              playedCount={playedCount}
+              totalCount={totalCount}
+              nextMatch={nextMatch}
+              nextMatchRound={nextMatchRound}
+              statCards={statCards}
+              fanDraft={fanDraft}
+              onFanDraft={setFanDraft}
+              onSendFan={sendFanMsg}
+              onMatchClick={handleMatchClick}
+              onOpenSettings={() => setShowSettings(true)}
+              onOpenRoster={() => setShowRoster(true)}
+              onCopyLink={() => navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?join=${activeLeague.id}`)}
+              onExportCsv={exportToExcel}
+              onShareEmail={shareViaEmail}
+              onSaveImage={downloadAsImage}
+            />
+          )}
+
+          {view === 'tournament' && activeLeague && activeTab === 'team-draw' && (
+            <TeamDrawTab
+              t={t}
+              tournament={activeLeague}
+              draw={activeLeague.draw}
+              onDrawChange={updateDraw}
+              isOwner={isOwner}
+              onBack={() => setActiveTab('tournament')}
+            />
+          )}
+
+          {view === 'tournament' && !activeLeague && (
+            <div className="connecting-screen">
+              <div className="spinner" />
+              <p>{t.connecting}</p>
+            </div>
           )}
         </div>
-      </div>
 
-      {isOwner && syncCode && (
-        <div className="sync-code-banner">
-          <span>Takip Kodu: <strong>{syncCode}</strong></span>
-          <button
-            className="btn-copy-code"
-            onClick={() => navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?join=${syncCode}`)}
-          >
-            Bağlantıyı Kopyala
-          </button>
-        </div>
-      )}
-
-      {!isOwner && (
-        <div className="read-only-banner">Bu turnuvayı canlı takip ediyorsunuz (salt okunur)</div>
-      )}
-
-      {/* Leaderboard */}
-      <div className="leaderboard">
-        <div className="leaderboard-title">
-          <img 
-            src="https://assets.stickpng.com/images/5842fe06a6515b1e0ad75b3b.png" 
-            alt="UCL Logo" 
-            className="ucl-logo"
-            onError={(e) => {
-              e.target.src = "https://brandslogos.com/wp-content/uploads/images/large/uefa-champions-league-logo-1.png"
-            }}
+        {showNav && (
+          <BottomNav
+            t={t}
+            activeScreen={activeTab}
+            onGoTournament={() => setActiveTab('tournament')}
+            onGoDraw={() => setActiveTab('team-draw')}
+            onGoHome={goHome}
           />
-          <h2>PUAN TABLOSU</h2>
-        </div>
-        <div className="leaderboard-table">
-          <div className="leaderboard-header">
-            <span>Sıra</span>
-            <span>Oyuncu</span>
-            <span>Puan</span>
-            <span>G</span>
-            <span>B</span>
-            <span>M</span>
-            <span>AG</span>
-            <span>YG</span>
-            <span>AV</span>
-          </div>
-          {leaderboard.map((player, index) => (
-            <div 
-              key={player.player.id} 
-              className={`leaderboard-row ${index === 0 && tournamentCompleted ? 'champion' : ''}`}
-            >
-              <span className="position">{index + 1}</span>
-              <span className="player-name">{player.player.name}</span>
-              <span className="points">{player.points}</span>
-              <span className="wins">{player.wins}</span>
-              <span className="draws">{player.draws}</span>
-              <span className="losses">{player.losses}</span>
-              <span className="goals-for">{player.goalsFor}</span>
-              <span className="goals-against">{player.goalsAgainst}</span>
-              <span className="goal-diff">{player.goalDifference > 0 ? '+' : ''}{player.goalDifference}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="tournament-rounds">
-        {tournament.rounds.map((round, roundIndex) => (
-          <div key={roundIndex} className="round">
-            <h3>{roundIndex + 1}. HAFTA</h3>
-            <div className="matches">
-              {round.map(match => (
-                <div
-                  key={match.id}
-                  className={`match ${match.completed ? 'completed' : 'pending'} ${isOwner && match.player1.id !== 'bye' && match.player2.id !== 'bye' && !match.completed ? 'clickable' : ''}`}
-                  onClick={() => handleMatchClick(roundIndex, match)}
-                >
-                  <div className="match-players">
-                    <span className={`player ${match.winner?.id === match.player1.id ? 'winner' : match.winner === 'draw' ? 'draw' : ''}`}>
-                      {match.player1.name}
-                      {match.completed && <span className="score">{match.score.player1}</span>}
-                    </span>
-                    <span className="vs">vs</span>
-                    <span className={`player ${match.winner?.id === match.player2.id ? 'winner' : match.winner === 'draw' ? 'draw' : ''}`}>
-                      {match.player2.name}
-                      {match.completed && <span className="score">{match.score.player2}</span>}
-                    </span>
-                  </div>
-                  {match.completed && (
-                    <div className="match-result">
-                      {match.winner === 'draw' ? 'Berabere' : `Kazanan: ${match.winner.name}`}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="tournament-actions">
-        <button className="btn-action" onClick={exportToExcel}>Excel Dosyasında İndir</button>
-        <button className="btn-action" onClick={shareViaEmail}>Email ile Paylaş</button>
-        <button className="btn-action" onClick={downloadAsImage}>Resim Olarak İndir</button>
+        )}
       </div>
 
       {selectedMatch && (
         <MatchResultModal
+          t={t}
+          weekLabel={`${selectedMatch.roundIndex + 1}. ${lang === 'tr' ? 'HAFTA' : 'WEEK'}`}
           match={selectedMatch.match}
           onResult={handleMatchResult}
           onClose={() => setSelectedMatch(null)}
@@ -497,398 +1038,239 @@ Turnuva detayları:
       )}
 
       {showSettings && (
-        <TournamentSettingsModal
-          tournament={tournament}
-          onClose={() => setShowSettings(false)}
+        <TournamentSettingsModal t={t} onClose={() => setShowSettings(false)} />
+      )}
+
+      {showRoster && activeLeague && isOwner && (
+        <RosterModal
+          t={t}
+          league={activeLeague}
+          onApply={applyRosterChange}
+          onClose={() => setShowRoster(false)}
         />
       )}
+
+      {isChampionTime && (
+        <ChampionModal t={t} name={leaderboard[0].player.name} onClose={() => setChampionDismissed(true)} />
+      )}
+
+      <ToastStack toasts={toasts} />
     </div>
   )
 }
 
-function App() {
-  const [stored] = useState(() => loadLocalState())
-
-  const [tournamentName, setTournamentName] = useState(() => stored?.tournamentName ?? '')
-  const [participantCount, setParticipantCount] = useState(() => stored?.participantCount ?? 4)
-  const [matchType, setMatchType] = useState(() => stored?.matchType ?? 'double')
-  const [participants, setParticipants] = useState(() => stored?.participants ?? [])
-  const [currentView, setCurrentView] = useState(() => stored?.tournament ? 'tournament' : (stored?.currentView ?? 'setup'))
-  const [tournament, setTournament] = useState(() => stored?.tournament ?? null)
-  const [syncState, setSyncState] = useState(() => stored?.sync ?? { tournamentCode: null, isOwner: true })
-  const [joinCodeInput, setJoinCodeInput] = useState('')
-  const [joinError, setJoinError] = useState('')
-  const [isJoining, setIsJoining] = useState(false)
-  const hasAutoJoined = useRef(false)
-
-  useTournamentPersistence({ tournamentName, participantCount, matchType, participants, currentView, tournament, sync: syncState })
-
-  const addParticipant = (name) => {
-    if (name.trim() && participants.length < participantCount) {
-      setParticipants([...participants, { id: Date.now(), name: name.trim() }])
-    }
-  }
-
-  const removeParticipant = (id) => {
-    setParticipants(participants.filter(p => p.id !== id))
-  }
-
-  const generateTournament = () => {
-    if (participants.length === participantCount) {
-      const shuffled = [...participants].sort(() => Math.random() - 0.5)
-      let rounds = generateBracket(shuffled)
-      
-      // If double match is selected, duplicate the rounds
-      if (matchType === 'double') {
-        const secondRounds = rounds.map((round) => {
-          return round.map((match) => {
-            // Swap player1 and player2 for the second leg
-            const newPlayer1 = match.player2
-            const newPlayer2 = match.player1
-            const isBye = newPlayer1.id === 'bye' || newPlayer2.id === 'bye'
-            const winner = isBye ? (newPlayer1.id === 'bye' ? newPlayer2 : newPlayer1) : null
-            const score = isBye
-              ? (newPlayer1.id === 'bye' ? { player1: 0, player2: 3 } : { player1: 3, player2: 0 })
-              : { player1: 0, player2: 0 }
-
-            return {
-              ...match,
-              id: `second-${match.id}`,
-              player1: newPlayer1,
-              player2: newPlayer2,
-              winner,
-              completed: isBye,
-              score
-            }
-          })
-        })
-        rounds = [...rounds, ...secondRounds]
-      }
-      
-      const newTournament = {
-        name: tournamentName.trim() || 'Turnuva',
-        participants: shuffled,
-        rounds: rounds,
-        currentRound: 0,
-        draw: {
-          currentStep: 'pot-selection',
-          selectedPot: null,
-          availableTeams: [],
-          selectedTeams: [],
-          revealedBalls: [],
-          drawCount: 0,
-          stirWheelResult: null
-        },
-        settings: {
-          winPoints: 3,
-          drawPoints: 1,
-          losePoints: 0,
-          allowDraws: false,
-          showGoalDiff: true,
-          showGoalsForAgainst: true,
-          tiebreaker: 'two'
-        }
-      }
-
-      setTournament(newTournament)
-      setSyncState({ tournamentCode: null, isOwner: true })
-      setCurrentView('tournament')
-
-      if (isFirebaseConfigured) {
-        createRemoteTournament(newTournament)
-          .then(code => {
-            if (code) setSyncState({ tournamentCode: code, isOwner: true })
-          })
-          .catch(err => console.error('[firebase] failed to create remote tournament', err))
-      }
-    }
-  }
-
-  const generateBracket = (players) => {
-    const rounds = []
-    const numPlayers = players.length
-    let playersList = [...players]
-    
-    // If odd number of players, add a dummy "BYE" player
-    if (numPlayers % 2 === 1) {
-      playersList.push({ id: 'bye', name: 'BYE' })
-    }
-    
-    const totalPlayers = playersList.length
-    const numRounds = totalPlayers - 1
-    
-    // Round-robin algorithm
-    for (let round = 0; round < numRounds; round++) {
-      const roundMatches = []
-      
-      for (let i = 0; i < totalPlayers / 2; i++) {
-        const player1Index = i
-        const player2Index = totalPlayers - 1 - i
-        
-        const player1 = playersList[player1Index]
-        const player2 = playersList[player2Index]
-        
-        // Skip if one player is bye and the other is a real player
-        if (player1.id === 'bye' || player2.id === 'bye') {
-          if (player1.id !== 'bye') {
-            roundMatches.push({
-              id: `round-${round}-bye-${player1.id}`,
-              player1: player1,
-              player2: { id: 'bye', name: 'BYE' },
-              winner: player1,
-              completed: true,
-              score: { player1: 3, player2: 0 }
-            })
-          } else if (player2.id !== 'bye') {
-            roundMatches.push({
-              id: `round-${round}-bye-${player2.id}`,
-              player1: player2,
-              player2: { id: 'bye', name: 'BYE' },
-              winner: player2,
-              completed: true,
-              score: { player1: 3, player2: 0 }
-            })
-          }
-        } else {
-          roundMatches.push({
-            id: `round-${round}-match-${i}`,
-            player1: player1,
-            player2: player2,
-            winner: null,
-            completed: false,
-            score: { player1: 0, player2: 0 }
-          })
-        }
-      }
-      
-      rounds.push(roundMatches)
-      
-      // Rotate players (except the first one which stays fixed)
-      if (totalPlayers > 2) {
-        const lastPlayer = playersList.pop()
-        playersList.splice(1, 0, lastPlayer)
-      }
-    }
-    
-    return rounds
-  }
-
-  const updateMatchResult = (roundIndex, matchId, winnerId, score) => {
-    if (!syncState.isOwner) return
-    setTournament(prev => {
-      const newTournament = { ...prev }
-      const updatedRounds = [...newTournament.rounds]
-      
-      const round = [...updatedRounds[roundIndex]]
-      const matchIndex = round.findIndex(m => m.id === matchId)
-      
-      if (matchIndex >= 0) {
-        const match = round[matchIndex]
-        let winner = null
-        
-        if (winnerId === 'draw') {
-          winner = 'draw'
-        } else if (winnerId === match.player1.id) {
-          winner = match.player1
-        } else {
-          winner = match.player2
-        }
-        
-        round[matchIndex] = {
-          ...match,
-          winner: winner,
-          completed: true,
-          score: score
-        }
-        
-        updatedRounds[roundIndex] = round
-        newTournament.rounds = updatedRounds
-      }
-      
-      return newTournament
-    })
-  }
-
-  const updateDraw = (partialDraw) => {
-    if (!syncState.isOwner) return
-    setTournament(prev => prev ? { ...prev, draw: { ...prev.draw, ...partialDraw } } : prev)
-  }
-
-  // Owner write-through: push every tournament change (match results, draw progress,
-  // settings) to Firestore so followers watching the join code see it live.
-  useEffect(() => {
-    if (!isFirebaseConfigured || !syncState.isOwner || !syncState.tournamentCode || !tournament) return
-    const timer = setTimeout(() => {
-      updateRemoteTournament(syncState.tournamentCode, tournament)
-        .catch(err => console.error('[firebase] failed to sync tournament', err))
-    }, 400)
-    return () => clearTimeout(timer)
-  }, [tournament, syncState.isOwner, syncState.tournamentCode])
-
-  // Follower subscription: replace local tournament state with whatever the owner last wrote.
-  useEffect(() => {
-    if (!syncState.tournamentCode || syncState.isOwner) return
-    const unsubscribe = subscribeToTournament(
-      syncState.tournamentCode,
-      data => setTournament(data),
-      () => setJoinError('Kod bulunamadı veya bağlantı kurulamadı.')
-    )
-    return unsubscribe
-  }, [syncState.tournamentCode, syncState.isOwner])
-
-  const joinTournament = async (rawCode) => {
-    const code = rawCode.trim().toUpperCase()
-    if (!code) return
-    if (!isFirebaseConfigured) {
-      setJoinError('Canlı takip şu anda yapılandırılmamış.')
-      return
-    }
-    setIsJoining(true)
-    setJoinError('')
-    const exists = await joinCodeExists(code)
-    setIsJoining(false)
-    if (!exists) {
-      setJoinError('Kod bulunamadı.')
-      return
-    }
-    setSyncState({ tournamentCode: code, isOwner: false })
-    setCurrentView('tournament')
-  }
-
-  // Auto-join if the page was opened via a shared ?join=CODE link.
-  useEffect(() => {
-    if (hasAutoJoined.current || tournament) return
-    hasAutoJoined.current = true
-    const codeFromUrl = new URLSearchParams(window.location.search).get('join')
-    if (codeFromUrl) {
-      setJoinCodeInput(codeFromUrl)
-      joinTournament(codeFromUrl)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  if (currentView === 'tournament' && tournament) {
-    return (
-      <TournamentView
-        tournament={tournament}
-        onBack={() => setCurrentView('setup')}
-        onUpdateMatch={updateMatchResult}
-        onUpdateDraw={updateDraw}
-        isOwner={syncState.isOwner}
-        syncCode={syncState.tournamentCode}
-      />
-    )
-  }
-
-  if (currentView === 'tournament' && !tournament && !syncState.isOwner) {
-    return (
-      <div className="tournament-connecting">
-        <div className="spinner"></div>
-        <p>Turnuvaya bağlanılıyor...</p>
-      </div>
-    )
-  }
+function TournamentScreen({
+  t, league, leaderboard, tournamentCompleted, isOwner,
+  currentWeek, playedCount, totalCount, nextMatch, nextMatchRound, statCards,
+  fanDraft, onFanDraft, onSendFan, onMatchClick, onOpenSettings, onOpenRoster, onCopyLink,
+  onExportCsv, onShareEmail, onSaveImage
+}) {
+  const [tab, setTab] = useState('table') // table | fixtures | stats
+  const history = league.matchHistory ?? []
+  const weekWord = t.week === 'Hafta' ? 'HAFTA' : 'WEEK'
 
   return (
-    <div className="tournament-app">
-      <div className="tournament-setup">
-        <h1>Turnuva Oluştur</h1>
-        
-        <div className="setup-form">
-          <div className="form-group">
-            <label>Turnuva İsmi</label>
-            <input
-              type="text"
-              value={tournamentName}
-              onChange={(e) => setTournamentName(e.target.value)}
-              placeholder="deneme"
-            />
+    <>
+      <div className="screen-pad tight">
+        <div className="tv-header-row">
+          <div style={{ minWidth: 0 }}>
+            <div className="eyebrow">{t.liveNow}</div>
+            <h1 className="tv-title">{league.name}</h1>
           </div>
-
-          <div className="form-group">
-            <label>Katılımcı Sayısı</label>
-            <input
-              type="number"
-              value={participantCount}
-              onChange={(e) => setParticipantCount(Math.max(2, parseInt(e.target.value) || 2))}
-              min="2"
-              max="16"
-            />
+          <div style={{ display: 'flex', gap: 8, flex: 'none' }}>
+            {isOwner && <button className="btn-icon" onClick={onOpenRoster}>👥</button>}
+            {isOwner && <button className="btn-icon" onClick={onOpenSettings}>⚙</button>}
           </div>
+        </div>
+        <div className="chip-row">
+          <div className="chip dark">{t.week} {currentWeek}</div>
+          <div className="chip">{playedCount}/{totalCount} {t.played2}</div>
+          <div className="chip live">{t.live}</div>
+        </div>
+      </div>
 
-          <div className="form-group">
-            <label>Maç Usulü</label>
-            <div className="match-type-options">
-              <label className="radio-option">
-                <input
-                  type="radio"
-                  name="matchType"
-                  value="single"
-                  checked={matchType === 'single'}
-                  onChange={(e) => setMatchType(e.target.value)}
-                />
-                Tek Maç
-              </label>
-              <label className="radio-option selected">
-                <input
-                  type="radio"
-                  name="matchType"
-                  value="double"
-                  checked={matchType === 'double'}
-                  onChange={(e) => setMatchType(e.target.value)}
-                />
-                Çift Maç
-              </label>
+      {isOwner && (
+        <div className="sync-banner">
+          <span>{t.leagueId}: <strong>#{league.id}</strong></span>
+          {isFirebaseConfigured && <button onClick={onCopyLink}>{t.copyLink}</button>}
+        </div>
+      )}
+      {!isOwner && (
+        <div className="readonly-banner">{t.readOnlyBanner}</div>
+      )}
+
+      <div className="tabs-row">
+        <button className={`tab-btn ${tab === 'table' ? 'active' : ''}`} onClick={() => setTab('table')}>{t.standings}</button>
+        <button className={`tab-btn ${tab === 'fixtures' ? 'active' : ''}`} onClick={() => setTab('fixtures')}>{t.fixtures}</button>
+        <button className={`tab-btn ${tab === 'stats' ? 'active' : ''}`} onClick={() => setTab('stats')}>{t.stats}</button>
+      </div>
+
+      {tab === 'table' && (
+        <>
+          <div className="table-card">
+            <div className="table-card-head">
+              <div className="table-logo"><SoccerBall /></div>
+              <h2>{t.standings}</h2>
+            </div>
+            <div className="table-head-row">
+              <span>#</span><span className="name-col">{t.player}</span><span>{t.pts}</span><span>{t.w}</span><span>{t.d}</span><span>{t.l}</span><span>{t.gf}</span><span>{t.ga}</span><span>{t.gd}</span>
+            </div>
+            <div className="table-body">
+              {leaderboard.map((p, i) => (
+                <div key={p.player.id} className={`table-row ${i === 0 && tournamentCompleted ? 'champion' : ''}`} onClick={() => setTab('stats')}>
+                  <span className={`pos ${i === 0 ? 'leader' : ''}`}>{i + 1}</span>
+                  <span className="name">{p.player.name}</span>
+                  <span className="pts">{p.points}</span>
+                  <span className="stat">{p.wins}</span>
+                  <span className="stat">{p.draws}</span>
+                  <span className="stat">{p.losses}</span>
+                  <span className="stat">{p.goalsFor}</span>
+                  <span className="stat">{p.goalsAgainst}</span>
+                  <span className="stat gd">{p.goalDifference > 0 ? '+' : ''}{p.goalDifference}</span>
+                </div>
+              ))}
             </div>
           </div>
 
-          <button
-            className="btn-primary"
-            onClick={() => setCurrentView('participants')}
-          >
-            Katılımcı Ekle
-          </button>
-        </div>
-      </div>
+          <div className="next-card">
+            <div className="section-label">{t.nextUp}</div>
+            {nextMatch ? (
+              <>
+                <div className="next-match-row" onClick={() => onMatchClick(nextMatchRound, nextMatch)}>
+                  <span className="p-name right">{nextMatch.player1.name}</span>
+                  <span className="vs-mark">VS</span>
+                  <span className="p-name">{nextMatch.player2.name}</span>
+                </div>
+                {isOwner && <div className="next-hint">{t.tapToScore}</div>}
+              </>
+            ) : (
+              <div className="next-hint">{t.done}</div>
+            )}
+          </div>
 
-      <div className="join-tournament">
-        <h2>Bir Turnuvayı Takip Et</h2>
-        <p>Takip kodunuz varsa buraya girerek turnuvayı canlı izleyebilirsiniz.</p>
-        <div className="join-form">
-          <input
-            type="text"
-            value={joinCodeInput}
-            onChange={(e) => { setJoinCodeInput(e.target.value.toUpperCase()); setJoinError('') }}
-            placeholder="Takip Kodu (örn. AB3XQ9)"
-            maxLength={6}
-          />
-          <button
-            className="btn-primary"
-            onClick={() => joinTournament(joinCodeInput)}
-            disabled={!joinCodeInput.trim() || isJoining}
-          >
-            {isJoining ? 'Bağlanılıyor...' : 'Katıl'}
-          </button>
-        </div>
-        {joinError && <p className="join-error">{joinError}</p>}
-        {!isFirebaseConfigured && (
-          <p className="join-info">Canlı takip özelliği bu ortamda yapılandırılmamış.</p>
-        )}
-      </div>
+          <div className="fan-card">
+            <div className="section-label on-dark">{t.fanMsgTitle}</div>
+            <div className="fan-form">
+              <input
+                type="text"
+                value={fanDraft}
+                onChange={(e) => onFanDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') onSendFan() }}
+                placeholder={t.fanPh}
+              />
+              <button onClick={onSendFan}>{t.send}</button>
+            </div>
+          </div>
+        </>
+      )}
 
-      {currentView === 'participants' && (
-        <div className="modal-overlay">
-          <ParticipantManager
-            participants={participants}
-            participantCount={participantCount}
-            onAddParticipant={addParticipant}
-            onRemoveParticipant={removeParticipant}
-            onGenerateTournament={generateTournament}
-            onBack={() => setCurrentView('setup')}
-          />
+      {tab === 'fixtures' && (
+        <div className="fixtures-wrap">
+          {league.rounds.map((round, roundIndex) => (
+            <div key={roundIndex} className="round-block">
+              <div className="round-head">
+                <div className="label">{roundIndex + 1}. {weekWord}</div>
+                <div className="rule" />
+                <div className="status">{round.every(m => m.completed) ? t.done : t.open}</div>
+              </div>
+              <div className="match-list">
+                {round.map(match => {
+                  const isBye = match.player2.id === 'bye'
+                  const clickable = isOwner && !isBye && !match.completed
+                  return (
+                    <div
+                      key={match.id}
+                      className={`match-card ${match.completed ? 'completed' : ''} ${!clickable ? 'readonly' : ''}`}
+                      onClick={() => (clickable ? onMatchClick(roundIndex, match) : null)}
+                    >
+                      <div className="match-grid">
+                        <span className="m-name right">{match.player1.name}</span>
+                        <div className="match-score-box">
+                          <span>{match.completed ? match.score.player1 : '–'}</span>
+                          <span className="sep">:</span>
+                          <span>{match.completed ? match.score.player2 : '–'}</span>
+                        </div>
+                        <span className="m-name">{match.player2.name}</span>
+                      </div>
+                      <div className="match-result-text" style={{ color: match.completed ? 'var(--ink-soft)' : 'var(--red)' }}>
+                        {isBye
+                          ? 'BYE'
+                          : match.completed
+                            ? (match.winner === 'draw' ? t.drawnMatch : `${t.winnerPre}: ${match.winner.name}`)
+                            : t.tapToScore}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+
+          {history.length > 0 && (
+            <div className="round-block">
+              <div className="round-head">
+                <div className="label">{t.history}</div>
+                <div className="rule" />
+                <div className="status">{history.length}</div>
+              </div>
+              <div className="match-list">
+                {history.map(match => (
+                  <div key={match.id} className="match-card completed readonly">
+                    <div className="match-grid">
+                      <span className="m-name right">{match.player1.name}</span>
+                      <div className="match-score-box">
+                        <span>{match.score.player1}</span>
+                        <span className="sep">:</span>
+                        <span>{match.score.player2}</span>
+                      </div>
+                      <span className="m-name">{match.player2.name}</span>
+                    </div>
+                    <div className="match-result-text" style={{ color: 'var(--ink-soft)' }}>
+                      {match.week ? <span className="history-week-chip">{match.week}. {weekWord}</span> : null}
+                      {match.winner === 'draw' ? t.drawnMatch : `${t.winnerPre}: ${match.winner?.name ?? ''}`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
-    </div>
+
+      {tab === 'stats' && (
+        <div className="stats-wrap">
+          {statCards.map(s => (
+            <div key={s.id} className="stat-card">
+              <div className="stat-card-head">
+                <div className="stat-avatar">{s.initial}</div>
+                <span className="stat-name">{s.name}</span>
+                <span className="stat-rank">{s.rank}.</span>
+              </div>
+              <div className="stat-grid">
+                <div className="stat-cell pts"><div className="v">{s.points}</div><div className="l">{t.pts}</div></div>
+                <div className="stat-cell"><div className="v">{s.played}</div><div className="l">{t.played}</div></div>
+                <div className="stat-cell"><div className="v">{s.gpg}</div><div className="l">{t.gpg}</div></div>
+                <div className="stat-cell"><div className="v">{s.winPct}%</div><div className="l">{t.winRate}</div></div>
+              </div>
+              <div className="stat-form-row">
+                <span className="l">{t.form}</span>
+                <div className="form-pills">
+                  {s.form.map((r, idx) => (
+                    <div key={idx} className={`form-pill ${r.toLowerCase()}`}>{r}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="action-list">
+        <button className="btn-outline-block" onClick={onExportCsv}>{t.exportCsv}</button>
+        <button className="btn-outline-block" onClick={onShareEmail}>{t.shareEmail}</button>
+        <button className="btn-outline-block" onClick={onSaveImage}>{t.saveImage}</button>
+      </div>
+    </>
   )
 }
 

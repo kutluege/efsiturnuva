@@ -1,3 +1,8 @@
+// Standings for a league. Counts both the current fixtures AND archived matches
+// from `matchHistory` (matches played before the squad was changed), so player
+// statistics survive fixture regenerations. Each side of a match is credited
+// independently — a history match against a since-removed player still counts
+// for the player who is still in the league.
 export function calculateLeaderboard(tournament) {
   if (!tournament) return []
 
@@ -17,48 +22,58 @@ export function calculateLeaderboard(tournament) {
     }
   })
 
-  tournament.rounds.forEach(round => {
-    round.forEach(match => {
-      if (match.completed && match.player1.id !== 'bye' && match.player2.id !== 'bye') {
-        const player1Stats = standings[match.player1.id]
-        const player2Stats = standings[match.player2.id]
+  const creditMatch = (match) => {
+    if (!match.completed || match.player1.id === 'bye' || match.player2.id === 'bye') return
 
-        player1Stats.goalsFor += match.score.player1
-        player1Stats.goalsAgainst += match.score.player2
-        player2Stats.goalsFor += match.score.player2
-        player2Stats.goalsAgainst += match.score.player1
+    const player1Stats = standings[match.player1.id]
+    const player2Stats = standings[match.player2.id]
+    const isDraw = match.winner === 'draw'
+    const p1Won = !isDraw && match.winner?.id === match.player1.id
 
-        player1Stats.matches.push({
-          opponent: match.player2,
-          goalsFor: match.score.player1,
-          goalsAgainst: match.score.player2,
-          result: match.winner === 'draw' ? 'draw' : (match.winner?.id === match.player1.id ? 'win' : 'loss')
-        })
-
-        player2Stats.matches.push({
-          opponent: match.player1,
-          goalsFor: match.score.player2,
-          goalsAgainst: match.score.player1,
-          result: match.winner === 'draw' ? 'draw' : (match.winner?.id === match.player2.id ? 'win' : 'loss')
-        })
-
-        if (match.winner === 'draw') {
-          player1Stats.points += 1
-          player2Stats.points += 1
-          player1Stats.draws += 1
-          player2Stats.draws += 1
-        } else if (match.winner?.id === match.player1.id) {
-          player1Stats.points += 3
-          player1Stats.wins += 1
-          player2Stats.losses += 1
-        } else {
-          player2Stats.points += 3
-          player2Stats.wins += 1
-          player1Stats.losses += 1
-        }
+    if (player1Stats) {
+      player1Stats.goalsFor += match.score.player1
+      player1Stats.goalsAgainst += match.score.player2
+      player1Stats.matches.push({
+        opponent: match.player2,
+        goalsFor: match.score.player1,
+        goalsAgainst: match.score.player2,
+        result: isDraw ? 'draw' : (p1Won ? 'win' : 'loss')
+      })
+      if (isDraw) {
+        player1Stats.points += 1
+        player1Stats.draws += 1
+      } else if (p1Won) {
+        player1Stats.points += 3
+        player1Stats.wins += 1
+      } else {
+        player1Stats.losses += 1
       }
-    })
-  })
+    }
+
+    if (player2Stats) {
+      player2Stats.goalsFor += match.score.player2
+      player2Stats.goalsAgainst += match.score.player1
+      player2Stats.matches.push({
+        opponent: match.player1,
+        goalsFor: match.score.player2,
+        goalsAgainst: match.score.player1,
+        result: isDraw ? 'draw' : (p1Won ? 'loss' : 'win')
+      })
+      if (isDraw) {
+        player2Stats.points += 1
+        player2Stats.draws += 1
+      } else if (p1Won) {
+        player2Stats.losses += 1
+      } else {
+        player2Stats.points += 3
+        player2Stats.wins += 1
+      }
+    }
+  }
+
+  // History first so form (last 5) stays roughly chronological.
+  ;(tournament.matchHistory || []).forEach(creditMatch)
+  tournament.rounds.forEach(round => round.forEach(creditMatch))
 
   Object.values(standings).forEach(stats => {
     stats.goalDifference = stats.goalsFor - stats.goalsAgainst

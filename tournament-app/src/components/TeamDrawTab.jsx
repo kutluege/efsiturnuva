@@ -3,6 +3,7 @@ import CoveredBall from './CoveredBall'
 import StirWheel from './StirWheel'
 import { TEAM_POTS, getRandomTeamsFromPot } from '../data/TeamData'
 import { calculateLeaderboard } from '../utils/leaderboard'
+import { getCopy } from '../i18n'
 
 const DEFAULT_DRAW = {
   currentStep: 'pot-selection',
@@ -14,7 +15,9 @@ const DEFAULT_DRAW = {
   stirWheelResult: null
 }
 
-function TeamDrawTab({ tournament, draw, onDrawChange, isOwner = true, onBack }) {
+function TeamDrawTab({ tournament, draw, onDrawChange, isOwner = true, onBack, t: tProp }) {
+  const t = tProp || getCopy('tr')
+
   const {
     currentStep,
     selectedPot,
@@ -107,45 +110,40 @@ function TeamDrawTab({ tournament, draw, onDrawChange, isOwner = true, onBack })
   const isStirWeek = currentWeek === 3 || currentWeek === 6
 
   return (
-    <div className="team-draw-tab">
-      <div className="team-draw-header">
-        <button className="btn-back" onClick={onBack}>← Back to Tournament</button>
-        <div className="draw-info">
-          <h1>Team Draw</h1>
-          <div className="draw-stats">
-            <span>Draw #{drawCount + 1}</span>
-            <span>Week {currentWeek}</span>
-            {isStirWeek && (
-              <span className="stir-indicator">🔥 Stir Week!</span>
-            )}
-          </div>
+    <>
+      <div className="screen-pad tight">
+        <button className="btn-outline" onClick={onBack}>← {t.back}</button>
+        <h1 className="screen-title" style={{ marginTop: 14 }}>{t.drawTitle}</h1>
+        <div className="draw-badges">
+          <div className="chip dark">{t.drawNo} #{drawCount + 1}</div>
+          <div className="chip">{t.week} {currentWeek}</div>
+          {isStirWeek && <div className="stir-chip">{t.stirWeek}</div>}
         </div>
       </div>
 
       {!isOwner && (
-        <div className="read-only-banner">Bu turnuvayı canlı takip ediyorsunuz (salt okunur)</div>
-      )}
-
-      {isStirWeek && currentStep === 'pot-selection' && (
-        <div className="stir-announcement">
-          <h2>Time to stir things up! 😈</h2>
-          <p>This is week {currentWeek} - after the team draw, the wheel will spin!</p>
-        </div>
+        <div className="readonly-banner" style={{ margin: '14px 18px 0' }}>{t.readOnlyBanner}</div>
       )}
 
       {currentStep === 'pot-selection' && (
-        <PotSelection onPotSelected={handlePotSelected} interactive={isOwner} />
+        <div className="screen-pad tight">
+          <p style={{ fontSize: 13, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--ink)', margin: '12px 0' }}>
+            {t.potHelp}
+          </p>
+          <PotSelection t={t} onPotSelected={handlePotSelected} interactive={isOwner} />
+        </div>
       )}
 
       {currentStep === 'team-selection' && (
-        <div className="team-selection">
-          <div className="selection-header">
-            <h2>Team Selection</h2>
-            <p>Selected Pot: <strong>{TEAM_POTS[selectedPot]?.name}</strong></p>
-            <p>{isOwner ? 'Click the balls to reveal your teams!' : 'Takımlar açılıyor...'}</p>
+        <div className="screen-pad tight">
+          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: 'var(--ink)' }}>
+            {TEAM_POTS[selectedPot]?.name}
+          </div>
+          <div className="screen-title sm" style={{ fontSize: 26, marginTop: 4 }}>
+            {isOwner ? t.tapBalls : t.ballsWaiting}
           </div>
 
-          <div className="balls-container">
+          <div className="ball-grid">
             {availableTeams.map((team, index) => (
               <CoveredBall
                 key={team.id}
@@ -159,14 +157,11 @@ function TeamDrawTab({ tournament, draw, onDrawChange, isOwner = true, onBack })
             ))}
           </div>
 
-          <div className="selection-progress">
-            <p>{revealedBalls.length} of {availableTeams.length} teams revealed</p>
-            <div className="progress-bar">
-              <div
-                className="progress-fill"
-                style={{ width: `${(revealedBalls.length / availableTeams.length) * 100}%` }}
-              ></div>
+          <div className="progress-row">
+            <div className="progress-track">
+              <div className="progress-fill" style={{ width: `${(revealedBalls.length / availableTeams.length) * 100}%` }} />
             </div>
+            <div className="progress-label">{revealedBalls.length}/{availableTeams.length}</div>
           </div>
         </div>
       )}
@@ -174,66 +169,59 @@ function TeamDrawTab({ tournament, draw, onDrawChange, isOwner = true, onBack })
       {currentStep === 'stir-wheel' && tournament && (
         isOwner ? (
           <StirWheel
+            t={t}
             leaderboard={calculateLeaderboard(tournament)}
             onWheelComplete={handleWheelComplete}
           />
         ) : (
-          <div className="stir-wheel-waiting">
-            <h2>Time to stir things up! 😈</h2>
-            <p>Çark döndürülüyor, sonuç bekleniyor...</p>
+          <div className="wheel-screen">
+            <div className="title">{t.stirTitle}</div>
+            <div className="wheel-waiting">{t.stirWaiting}</div>
           </div>
         )
       )}
 
       {currentStep === 'completed' && (
-        <div className="draw-completed">
-          <div className="completion-header">
-            <div className="success-icon">🎉</div>
-            <h2>Draw Complete!</h2>
-            <p>Week {currentWeek} team assignments</p>
+        <div className="screen-pad tight">
+          <div className="done-banner">
+            <div className="title">{t.drawDone}</div>
+            <div className="sub">{TEAM_POTS[selectedPot]?.name}</div>
           </div>
 
-          <div className="selected-teams-display">
-            <h3>Your Teams from {TEAM_POTS[selectedPot]?.name}:</h3>
-            <div className="teams-grid">
-              {selectedTeams.map((team) => (
-                <div key={team.id} className="team-card">
-                  <div className="team-badge">⚽</div>
-                  <div className="team-info">
-                    <div className="team-name">{team.name}</div>
-                    <div className="team-country">{team.country}</div>
-                  </div>
+          <div className="done-list">
+            {selectedTeams.map((team, index) => (
+              <div key={team.id} className="done-team-row">
+                <div className="soccer-ball done-team-badge"><div className="p p1" /><div className="p p2" /><div className="p p3" /></div>
+                <div className="done-team-info">
+                  <div className="name">{team.name}</div>
+                  <div className="country">{team.country}</div>
                 </div>
-              ))}
-            </div>
+                <div className="done-team-owner">{tournament?.participants?.[index]?.name || ''}</div>
+              </div>
+            ))}
           </div>
 
           {stirWheelResult && (
-            <div className="stir-result">
-              <h3>Stir Result:</h3>
-              <div className="winner-announcement">
-                <strong>{stirWheelResult.player.player.name}</strong> was selected by the wheel!
-                <br />
-                They can change their team to any team they want.
-              </div>
+            <div className="wheel-result-card" style={{ marginTop: 14 }}>
+              <div className="kicker">{t.wheelPicked}</div>
+              <div className="winner">{stirWheelResult.player.player.name}</div>
+              <div className="note">{stirWheelResult.player.player.name} {t.stirSub}</div>
               {isOwner && (
-                <button className="btn-team-swap" onClick={handleTeamSwap}>
-                  Change Team for {stirWheelResult.player.player.name}
+                <button className="btn-outline-block" style={{ marginTop: 10 }} onClick={handleTeamSwap}>
+                  {stirWheelResult.player.player.name}
                 </button>
               )}
             </div>
           )}
 
           {isOwner && (
-            <div className="draw-actions">
-              <button className="btn-new-draw" onClick={handleNewDraw}>
-                Start New Draw
-              </button>
-            </div>
+            <button className="btn-cta sm" style={{ marginTop: 14 }} onClick={handleNewDraw}>
+              {t.newDraw}
+            </button>
           )}
         </div>
       )}
-    </div>
+    </>
   )
 }
 

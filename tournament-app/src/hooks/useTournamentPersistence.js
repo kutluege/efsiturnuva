@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { saveLocalState } from '../utils/localPersistence'
+import { saveAppState } from '../utils/localPersistence'
 
-export function useTournamentPersistence(state) {
+// Pass a useMemo'd snapshot so this only fires when watched values actually change.
+export function useAppPersistence(snapshot) {
   const isFirstRun = useRef(true)
 
   useEffect(() => {
@@ -9,15 +10,6 @@ export function useTournamentPersistence(state) {
       isFirstRun.current = false
       return
     }
-    saveLocalState(state)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    state.tournamentName,
-    state.participantCount,
-    state.matchType,
-    state.participants,
-    state.currentView,
-    state.tournament,
-    state.sync
-  ])
+    saveAppState(snapshot)
+  }, [snapshot])
 }

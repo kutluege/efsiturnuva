@@ -1,15 +1,26 @@
 import { doc, setDoc, getDoc, onSnapshot, serverTimestamp } from 'firebase/firestore'
 import { db, isFirebaseConfigured } from '../firebase'
 
-// Ambiguous characters (0/O, 1/I/L) excluded so codes are easy to read/type aloud.
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+// League codes are 4-digit numbers; the code IS the Firestore document ID,
+// which lets security rules allow single-doc `get` while denying `list`.
+export function isValidLeagueCode(code) {
+  return /^\d{4}$/.test(code)
+}
 
-export function generateJoinCode(length = 6) {
-  let code = ''
-  for (let i = 0; i < length; i++) {
-    code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]
+// Firestore rejects nested arrays, but league.rounds is match[][] — wrap each
+// round in an object for storage and unwrap when reading.
+function serializeLeague(league) {
+  return {
+    ...league,
+    rounds: (league.rounds || []).map(round => ({ matches: round }))
   }
-  return code
+}
+
+function deserializeLeague(data) {
+  return {
+    ...data,
+    rounds: (data.rounds || []).map(round => (Array.isArray(round) ? round : (round.matches || [])))
+  }
 }
 
 export async function joinCodeExists(code) {
@@ -18,33 +29,26 @@ export async function joinCodeExists(code) {
   return snap.exists()
 }
 
-// Tries a handful of freshly-generated codes until it finds one that isn't already taken.
-export async function createRemoteTournament(data) {
-  if (!isFirebaseConfigured) return null
+// Fetch a league once (used when resuming a league on a new device).
+export async function fetchRemoteLeague(code) {
+  if (!isFirebaseConfigured || !code) return null
+  const snap = await getDoc(doc(db, 'tournaments', code))
+  return snap.exists() ? deserializeLeague(snap.data()) : null
+}
 
-  let code = null
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const candidate = generateJoinCode()
-    if (!(await joinCodeExists(candidate))) {
-      code = candidate
-      break
-    }
-  }
-  if (!code) return null
-
-  await setDoc(doc(db, 'tournaments', code), {
-    ...data,
-    joinCode: code,
+export async function createRemoteLeague(id, data) {
+  if (!isFirebaseConfigured || !id) return
+  await setDoc(doc(db, 'tournaments', id), {
+    ...serializeLeague(data),
+    joinCode: id,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   })
-
-  return code
 }
 
 export async function updateRemoteTournament(code, data) {
   if (!isFirebaseConfigured || !code) return
-  await setDoc(doc(db, 'tournaments', code), { ...data, updatedAt: serverTimestamp() }, { merge: true })
+  await setDoc(doc(db, 'tournaments', code), { ...serializeLeague(data), updatedAt: serverTimestamp() }, { merge: true })
 }
 
 export function subscribeToTournament(code, onData, onError) {
@@ -54,7 +58,7 @@ export function subscribeToTournament(code, onData, onError) {
   }
   return onSnapshot(
     doc(db, 'tournaments', code),
-    snap => (snap.exists() ? onData(snap.data()) : onError?.(new Error('not-found'))),
+    snap => (snap.exists() ? onData(deserializeLeague(snap.data())) : onError?.(new Error('not-found'))),
     onError
   )
 }
