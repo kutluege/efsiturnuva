@@ -14,14 +14,6 @@ import {
 import { isEmailConfigured, sendAdminKeyEmail, openAdminKeyMailto } from './services/adminEmail'
 import { getCopy } from './i18n'
 
-const FAN_MESSAGES = [
-  { from: 'Emre', tr: 'Kutlu yine Pot 1 çekerse isyan var! 😤', en: 'If Kutlu draws Pot 1 again there will be riots! 😤' },
-  { from: 'Selin', tr: 'Ege bu hafta kupayı garantiler bence', en: 'Ege is locking the cup this week, calling it' },
-  { from: 'Barış', tr: 'Berk savunma yapmayı öğrenmiş 👏', en: 'Berk finally learned how to defend 👏' },
-  { from: 'Zeynep', tr: 'Çarkı çevir çarkı! ÇEVİR!', en: 'Spin the wheel! SPIN IT!' },
-  { from: 'Can', tr: 'Deniz averajla 3. olur, not alın', en: 'Deniz finishes 3rd on GD, mark my words' }
-]
-
 function SoccerBall({ dark }) {
   return (
     <div className={`soccer-ball ${dark ? 'dark' : ''}`}>
@@ -402,6 +394,7 @@ function TournamentSettingsModal({ t, onClose }) {
       <div className="sheet scrollable">
         <div className="sheet-head">
           <div className="title">{t.rules}</div>
+          <button className="sheet-close" onClick={onClose} aria-label={t.close}>✕</button>
         </div>
         <div className="rules-body">
           <div className="points-grid">
@@ -795,8 +788,9 @@ function App() {
     setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), 4000)
   }
 
+  // While on the draw tab, cycle the REAL viewer notes as side pop-ups.
   useEffect(() => {
-    if (activeTab !== 'team-draw' || view !== 'tournament') {
+    if (activeTab !== 'team-draw' || view !== 'tournament' || fanNotes.length === 0) {
       if (fanTimerRef.current) {
         clearInterval(fanTimerRef.current)
         fanTimerRef.current = null
@@ -805,9 +799,9 @@ function App() {
     }
     let i = 0
     const tick = () => {
-      const m = FAN_MESSAGES[i % FAN_MESSAGES.length]
+      const note = fanNotes[i % fanNotes.length]
       i++
-      pushToast(m.from, lang === 'tr' ? m.tr : m.en)
+      pushToast(note.name, note.text)
     }
     const startTimer = setTimeout(tick, 900)
     fanTimerRef.current = setInterval(tick, 4200)
@@ -818,7 +812,7 @@ function App() {
         fanTimerRef.current = null
       }
     }
-  }, [activeTab, view, lang])
+  }, [activeTab, view, fanNotes])
 
   const sendFanMsg = () => {
     const text = fanDraft.trim()
@@ -996,6 +990,7 @@ Lig detayları:
       points: p.points,
       played,
       gpg: played ? (p.goalsFor / played).toFixed(1) : '0.0',
+      cpg: played ? (p.goalsAgainst / played).toFixed(1) : '0.0',
       winPct: played ? Math.round((p.wins / played) * 100) : 0,
       form: p.matches.slice(-5).map(m => (m.result === 'win' ? 'W' : m.result === 'draw' ? 'D' : 'L'))
     }
@@ -1291,12 +1286,16 @@ function TournamentScreen({
           <div className="notes-card">
             <div className="section-label">{t.notesTitle}</div>
             {fanNotes.length === 0 && <p className="notes-empty">{t.noNotes}</p>}
-            {fanNotes.map(note => (
-              <div key={note.id} className="note-row">
-                <span className="note-name">{note.name}</span>
-                <span className="note-text">{note.text}</span>
+            {fanNotes.length > 0 && (
+              <div className="notes-scroll">
+                {fanNotes.map(note => (
+                  <div key={note.id} className="note-row">
+                    <span className="note-name">{note.name}</span>
+                    <span className="note-text">{note.text}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
 
           <div className="next-card">
@@ -1432,13 +1431,15 @@ function TournamentScreen({
                 <div className="stat-cell pts"><div className="v">{s.points}</div><div className="l">{t.pts}</div></div>
                 <div className="stat-cell"><div className="v">{s.played}</div><div className="l">{t.played}</div></div>
                 <div className="stat-cell"><div className="v">{s.gpg}</div><div className="l">{t.gpg}</div></div>
+                <div className="stat-cell"><div className="v">{s.cpg}</div><div className="l">{t.cpg}</div></div>
                 <div className="stat-cell"><div className="v">{s.winPct}%</div><div className="l">{t.winRate}</div></div>
               </div>
               <div className="stat-form-row">
                 <span className="l">{t.form}</span>
                 <div className="form-pills">
                   {s.form.map((r, idx) => (
-                    <div key={idx} className={`form-pill ${r.toLowerCase()}`}>{r}</div>
+                    // Localized letter (TR: G/B/M, EN: W/D/L); CSS class stays w/d/l.
+                    <div key={idx} className={`form-pill ${r.toLowerCase()}`}>{t[r.toLowerCase()]}</div>
                   ))}
                 </div>
               </div>
