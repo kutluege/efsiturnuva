@@ -4,15 +4,32 @@ import TeamDrawTab from './components/TeamDrawTab'
 import { calculateLeaderboard } from './utils/leaderboard'
 import { loadAppState } from './utils/localPersistence'
 import { useAppPersistence } from './hooks/useTournamentPersistence'
-import { generateRounds, createDefaultDraw, createDefaultSettings, generateUniqueLeagueId, generateAdminKey } from './utils/fixtures'
+import { generateRounds, createDefaultDraw, createDefaultSettings, generateUniqueLeagueId } from './utils/fixtures'
 import { isFirebaseConfigured } from './firebase'
 import {
   createRemoteLeague, updateRemoteTournament, subscribeToTournament,
   fetchRemoteLeague, joinCodeExists, isValidLeagueCode,
-  sendFanNote, subscribeToFanNotes
+  sendFanNote, subscribeToFanNotes,
+  setAdminEmails, claimLegacyLeague, subscribeToMyLeagues, deleteRemoteLeague, hasAuthUser
 } from './services/tournamentSync'
-import { isEmailConfigured, sendAdminKeyEmail, openAdminKeyMailto } from './services/adminEmail'
+import { isCompletingSignIn, completeSignIn, getStoredSignInEmail, watchAuth, logout, normalizeEmail } from './services/authService'
+import AuthScreen from './components/AuthScreen'
+import AdminManageModal from './components/AdminManageModal'
+import ConfirmModal from './components/ConfirmModal'
 import { getCopy } from './i18n'
+
+// Ownership is derived, never trusted from storage, whenever the league lives
+// in Firestore: you are an admin iff your verified email is on the admin list.
+// Legacy leagues (pre-auth, no adminEmails) and local-only mode keep the old
+// per-device isOwner flag.
+function deriveIsOwner(league, authEmail) {
+  if (!league) return false
+  if (!isFirebaseConfigured) return league.isOwner ?? true
+  if (Array.isArray(league.adminEmails) && league.adminEmails.length > 0) {
+    return !!authEmail && league.adminEmails.includes(authEmail)
+  }
+  return league.isOwner ?? false
+}
 
 function SoccerBall({ dark }) {
   return (
@@ -24,7 +41,7 @@ function SoccerBall({ dark }) {
   )
 }
 
-function Header({ lang, t, onSetLang }) {
+function Header({ lang, t, onSetLang, authEmail, onSignOut, onSignIn }) {
   return (
     <div className="app-header">
       <div className="logo-badge">EF</div>
@@ -32,6 +49,17 @@ function Header({ lang, t, onSetLang }) {
         <div className="brand-title">EFSİ <span className="accent">LİG</span></div>
         <div className="brand-tagline">{t.tagline}</div>
       </div>
+      {isFirebaseConfigured && authEmail && (
+        <button className="auth-chip" onClick={onSignOut} title={t.signOut}>
+          <span className="auth-chip-email">{authEmail}</span>
+          <span className="auth-chip-action">{t.signOut}</span>
+        </button>
+      )}
+      {isFirebaseConfigured && !authEmail && onSignIn && (
+        <button className="auth-chip" onClick={onSignIn}>
+          <span className="auth-chip-action">{t.signIn}</span>
+        </button>
+      )}
       <div className="lang-toggle">
         <button className={`lang-btn ${lang === 'tr' ? 'active' : ''}`} onClick={() => onSetLang('tr')}>TR</button>
         <button className={`lang-btn ${lang === 'en' ? 'active' : ''}`} onClick={() => onSetLang('en')}>EN</button>
@@ -95,34 +123,12 @@ function ChampionModal({ t, name, onClose }) {
   )
 }
 
-function AdminKeyModal({ t, adminKey, emailStatus, onClose }) {
-  const [copied, setCopied] = useState(false)
-
-  const copyKey = () => {
-    navigator.clipboard.writeText(adminKey)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1600)
-  }
-
-  return (
-    <div className="sheet-overlay center">
-      <div className="champion-card">
-        <div className="kicker">{t.adminIdTitle}</div>
-        <div className="admin-key-value">{adminKey}</div>
-        <div className="note">{t.adminKeyModalNote}</div>
-        {emailStatus === 'sent' && <div className="admin-email-status ok">✓ {t.adminEmailSent}</div>}
-        {emailStatus === 'failed' && <div className="admin-email-status err">{t.adminEmailFailed}</div>}
-        {emailStatus === 'mailto' && <div className="admin-email-status">{t.adminEmailMailto}</div>}
-        <button className="btn-outline-block" style={{ marginBottom: 10 }} onClick={copyKey}>
-          {copied ? t.copied : t.copyKey}
-        </button>
-        <button onClick={onClose}>{t.close}</button>
-      </div>
-    </div>
-  )
-}
-
-function HomeScreen({ t, leagues, onOpenLeague, onNewLeague, joinCodeInput, onJoinInput, adminKeyInput, onAdminKeyInput, joinError, isJoining, onJoin }) {
+function HomeScreen({
+  t, leagues, authEmail, onOpenLeague, onNewLeague,
+  joinCodeInput, onJoinInput, joinError, isJoining, onJoin,
+  legacyClaim, claimKeyInput, onClaimKeyInput, onClaim, claimError,
+  onRequestRemove, onRequestDelete
+}) {
   const list = Object.values(leagues).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
   const canJoin = isValidLeagueCode(joinCodeInput) && !isJoining
 
@@ -136,18 +142,27 @@ function HomeScreen({ t, leagues, onOpenLeague, onNewLeague, joinCodeInput, onJo
 
       <div className="league-list">
         {list.length === 0 && <p className="join-info">{t.noLeagues}</p>}
-        {list.map(l => (
-          <div key={l.id} className="league-row" onClick={() => onOpenLeague(l.id)}>
-            <div className="league-id-badge">#{l.id}</div>
-            <div className="league-info">
-              <div className="league-name">{l.name}</div>
-              <div className="league-meta">
-                {l.participants.length} {t.playersUnit} • {l.isOwner ? t.managerChip : t.viewerChip}
+        {list.map(l => {
+          const owns = deriveIsOwner(l, authEmail)
+          return (
+            <div key={l.id} className="league-row" onClick={() => onOpenLeague(l.id)}>
+              <div className="league-id-badge">#{l.id}</div>
+              <div className="league-info">
+                <div className="league-name">{l.name}</div>
+                <div className="league-meta">
+                  {l.participants.length} {t.playersUnit} • {owns ? t.managerChip : t.viewerChip}
+                </div>
               </div>
+              <div className="league-actions" onClick={(e) => e.stopPropagation()}>
+                {owns && isFirebaseConfigured && Array.isArray(l.adminEmails) && l.adminEmails.length > 0 && (
+                  <button className="league-action-btn danger" title={t.deleteLeague} onClick={() => onRequestDelete(l.id)}>🗑</button>
+                )}
+                <button className="league-action-btn" title={t.removeFromList} onClick={() => onRequestRemove(l.id)}>✕</button>
+              </div>
+              <span className="league-open">→</span>
             </div>
-            <span className="league-open">→</span>
-          </div>
-        ))}
+          )
+        })}
         <button className="btn-cta" onClick={onNewLeague}>+ {t.newLeague}</button>
       </div>
 
@@ -163,25 +178,31 @@ function HomeScreen({ t, leagues, onOpenLeague, onNewLeague, joinCodeInput, onJo
             placeholder={t.joinCodePh}
             maxLength={4}
           />
-        </div>
-        <div className="join-form" style={{ marginTop: 8 }}>
-          <input
-            type="text"
-            value={adminKeyInput}
-            onChange={(e) => onAdminKeyInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
-            placeholder={t.adminKeyPh}
-            maxLength={8}
-          />
-        </div>
-        <div className="join-mode-row">
-          <button className="btn-outline-block" disabled={!canJoin} onClick={() => onJoin(joinCodeInput, 'resume', adminKeyInput)}>
-            {isJoining ? t.joining : t.resume}
-          </button>
-          <button className="btn-outline-block" disabled={!canJoin} onClick={() => onJoin(joinCodeInput, 'watch', adminKeyInput)}>
-            {t.watch}
+          <button className="join-btn" disabled={!canJoin} onClick={() => onJoin(joinCodeInput)}>
+            {isJoining ? t.joining : t.joinBtn}
           </button>
         </div>
         {joinError && <p className="join-error">{joinError}</p>}
+
+        {legacyClaim && (
+          <div className="legacy-claim">
+            <p className="join-info">{t.legacyLeagueNote}</p>
+            <div className="join-form">
+              <input
+                type="text"
+                value={claimKeyInput}
+                onChange={(e) => onClaimKeyInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                placeholder={t.adminKeyPh}
+                maxLength={8}
+              />
+              <button className="join-btn" disabled={claimKeyInput.length !== 8} onClick={onClaim}>
+                {t.claimBtn}
+              </button>
+            </div>
+            {claimError && <p className="join-error">{claimError}</p>}
+          </div>
+        )}
+
         {!isFirebaseConfigured && <p className="join-info">{t.joinLocalNote}</p>}
       </div>
     </>
@@ -423,12 +444,6 @@ function TournamentSettingsModal({ t, onClose }) {
             </div>
           ))}
 
-          <div className="email-box">
-            <div className="title">{t.emailTitle}</div>
-            <div className="note">{t.emailNote}</div>
-            <input type="email" placeholder={t.emailPh} />
-          </div>
-
           <button className="btn-cta sm" onClick={onClose}>{t.saveRules}</button>
         </div>
       </div>
@@ -453,16 +468,31 @@ function App() {
   const [participantCount, setParticipantCount] = useState(() => boot?.setupDraft?.participantCount ?? 4)
   const [matchType, setMatchType] = useState(() => boot?.setupDraft?.matchType ?? 'double')
   const [draftParticipants, setDraftParticipants] = useState(() => boot?.setupDraft?.participants ?? [])
-  const [creatorEmail, setCreatorEmail] = useState(() => boot?.setupDraft?.creatorEmail ?? '')
 
   const [joinCodeInput, setJoinCodeInput] = useState('')
-  const [adminKeyInput, setAdminKeyInput] = useState('')
   const [joinError, setJoinError] = useState('')
   const [isJoining, setIsJoining] = useState(false)
   const hasAutoJoined = useRef(false)
+  const [urlHasJoin, setUrlHasJoin] = useState(() => new URLSearchParams(window.location.search).has('join'))
 
-  // Freshly created league: show the admin key once, with email delivery status.
-  const [adminKeyReveal, setAdminKeyReveal] = useState(null) // { adminKey, emailStatus }
+  // Sign-in choice shown when an unsigned user finishes the setup wizard.
+  const [showCreateAuthChoice, setShowCreateAuthChoice] = useState(false)
+
+  // Legacy (adminKey-era) league claim flow on the home screen.
+  const [legacyClaim, setLegacyClaim] = useState(null) // { code }
+  const [claimKeyInput, setClaimKeyInput] = useState('')
+  const [claimError, setClaimError] = useState('')
+
+  // Remove-from-list / permanent-delete confirmations.
+  const [confirmAction, setConfirmAction] = useState(null) // { type: 'remove'|'delete', id }
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  // ---- Auth (email-link sign-in) ----
+  const [authUser, setAuthUser] = useState(undefined) // undefined = resolving, null = signed out
+  const [authSkipped, setAuthSkipped] = useState(() => boot?.authSkipped ?? false)
+  const [signInPending, setSignInPending] = useState(() => isCompletingSignIn())
+  const [signInNeedsEmail, setSignInNeedsEmail] = useState(false)
+  const [signInError, setSignInError] = useState('')
 
   // Viewer notes (feature: spectator name + note shown under the scoreboard)
   const [fanName, setFanName] = useState(() => boot?.fanName ?? '')
@@ -472,14 +502,56 @@ function App() {
   const [selectedMatch, setSelectedMatch] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showRoster, setShowRoster] = useState(false)
+  const [showAdmins, setShowAdmins] = useState(false)
   const [championDismissed, setChampionDismissed] = useState(false)
   const [toasts, setToasts] = useState([])
   const [fanDraft, setFanDraft] = useState('')
   const fanTimerRef = useRef(null)
 
+  // True while a local edit hasn't been flushed to Firestore yet — blocks the
+  // admin snapshot handler from clobbering it, and gates the write-through so
+  // remote snapshots don't echo back into new writes (feedback loop).
+  const pendingLocalWrite = useRef(false)
+
   const t = getCopy(lang)
+  const authEmail = authUser?.email ? normalizeEmail(authUser.email) : null
   const activeLeague = activeLeagueId ? leagues[activeLeagueId] : null
-  const isOwner = activeLeague?.isOwner ?? true
+  const isOwner = deriveIsOwner(activeLeague, authEmail)
+
+  // Complete a sign-in link on load; watch auth state.
+  useEffect(() => {
+    if (signInPending) {
+      const stored = getStoredSignInEmail()
+      if (!stored) {
+        setSignInNeedsEmail(true)
+      } else {
+        completeSignIn()
+          .then(() => { setSignInPending(false); setAuthSkipped(false) })
+          .catch(err => {
+            console.error('[auth] sign-in completion failed', err)
+            setSignInError(t.authInvalidLink)
+            setSignInPending(false)
+          })
+      }
+    }
+    return watchAuth(setAuthUser)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const confirmSignInEmail = (email) => {
+    setSignInError('')
+    completeSignIn(email)
+      .then(() => { setSignInPending(false); setSignInNeedsEmail(false); setAuthSkipped(false) })
+      .catch(err => {
+        console.error('[auth] sign-in completion failed', err)
+        setSignInError(t.authInvalidLink)
+      })
+  }
+
+  const handleSignOut = () => {
+    pendingLocalWrite.current = false
+    logout().catch(err => console.error('[auth] sign-out failed', err))
+  }
 
   const persistSnapshot = useMemo(() => ({
     version: 2,
@@ -487,14 +559,16 @@ function App() {
     currentView: view,
     activeLeagueId,
     fanName,
-    setupDraft: { tournamentName, participantCount, matchType, participants: draftParticipants, creatorEmail },
+    authSkipped,
+    setupDraft: { tournamentName, participantCount, matchType, participants: draftParticipants },
     leagues
-  }), [lang, view, activeLeagueId, fanName, tournamentName, participantCount, matchType, draftParticipants, creatorEmail, leagues])
+  }), [lang, view, activeLeagueId, fanName, authSkipped, tournamentName, participantCount, matchType, draftParticipants, leagues])
 
   useAppPersistence(persistSnapshot)
 
   const mutateActiveLeague = (updater) => {
     if (!activeLeagueId) return
+    pendingLocalWrite.current = true
     setLeagues(prev => {
       const current = prev[activeLeagueId]
       if (!current) return prev
@@ -516,23 +590,24 @@ function App() {
 
   // ---- League creation ----
 
-  const createLeague = async () => {
+  // localOnly: escape hatch when the user refuses to sign in — the league
+  // lives only on this device (no Firestore doc, rules would reject it anyway).
+  const createLeague = async (localOnly = false) => {
     if (draftParticipants.length !== participantCount) return
+
+    const remote = isFirebaseConfigured && !localOnly && !!authEmail
 
     const shuffled = [...draftParticipants].sort(() => Math.random() - 0.5)
     const rounds = generateRounds(shuffled, matchType)
 
     let id = generateUniqueLeagueId(Object.keys(leagues))
-    if (isFirebaseConfigured) {
+    if (remote) {
       for (let attempt = 0; attempt < 5; attempt++) {
         const taken = await joinCodeExists(id).catch(() => false)
         if (!taken) break
         id = generateUniqueLeagueId([...Object.keys(leagues), id])
       }
     }
-
-    const adminKey = generateAdminKey()
-    const email = creatorEmail.trim()
 
     const league = {
       id,
@@ -545,8 +620,7 @@ function App() {
       settings: createDefaultSettings(),
       matchHistory: [],
       isOwner: true,
-      adminKey,
-      adminEmail: email,
+      ...(remote ? { adminEmails: [authEmail] } : {}),
       createdAt: Date.now(),
       updatedAt: Date.now()
     }
@@ -558,23 +632,9 @@ function App() {
     setChampionDismissed(false)
     setDraftParticipants([])
 
-    if (isFirebaseConfigured) {
-      createRemoteLeague(id, league)
+    if (remote) {
+      createRemoteLeague(id, league, authEmail)
         .catch(err => console.error('[firebase] failed to create remote league', err))
-    }
-
-    // Deliver the admin key to the creator's email; always reveal it once in the UI too.
-    const emailPayload = { toEmail: email, leagueName: league.name, leagueId: id, adminKey }
-    if (email && isEmailConfigured) {
-      setAdminKeyReveal({ adminKey, emailStatus: 'pending' })
-      sendAdminKeyEmail(emailPayload)
-        .then(ok => setAdminKeyReveal({ adminKey, emailStatus: ok ? 'sent' : 'failed' }))
-        .catch(() => setAdminKeyReveal({ adminKey, emailStatus: 'failed' }))
-    } else if (email) {
-      openAdminKeyMailto(emailPayload)
-      setAdminKeyReveal({ adminKey, emailStatus: 'mailto' })
-    } else {
-      setAdminKeyReveal({ adminKey, emailStatus: null })
     }
   }
 
@@ -645,31 +705,89 @@ function App() {
 
   // ---- Firebase sync ----
 
-  // Owner write-through: push every league change to Firestore.
+  // Ref mirror so long-lived snapshot handlers see the current active id
+  // without resubscribing on every navigation.
+  const activeLeagueIdRef = useRef(activeLeagueId)
   useEffect(() => {
-    if (!isFirebaseConfigured || !activeLeague || !activeLeague.isOwner) return
+    activeLeagueIdRef.current = activeLeagueId
+  }, [activeLeagueId])
+
+  // Is the active league backed by a Firestore doc? (local-only leagues have
+  // no adminEmails and were never pushed)
+  const activeLeagueIsRemote = !!activeLeague &&
+    (Array.isArray(activeLeague.adminEmails) ? activeLeague.adminEmails.length > 0 : !activeLeague.isOwner)
+
+  // Admin write-through: flush local edits to Firestore. Only fires for edits
+  // made on this device (pendingLocalWrite), never for echoed snapshots.
+  useEffect(() => {
+    if (!isFirebaseConfigured || !activeLeague || !isOwner || !activeLeagueIsRemote) return
+    if (!pendingLocalWrite.current) return
     const timer = setTimeout(() => {
+      if (!hasAuthUser()) return // signed out while the debounce was pending
+      pendingLocalWrite.current = false
       updateRemoteTournament(activeLeague.id, activeLeague)
         .catch(err => console.error('[firebase] failed to sync league', err))
     }, 400)
     return () => clearTimeout(timer)
-  }, [activeLeague])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLeague, authEmail])
 
-  // Follower subscription: keep watched leagues live.
+  // Live subscription for every remote-backed active league — viewers AND
+  // admins (so co-admins see each other's edits). Admins skip applying remote
+  // data while their own local edit is still unflushed.
   useEffect(() => {
-    if (!activeLeagueId || !activeLeague || activeLeague.isOwner) return
+    if (!activeLeagueId || !activeLeague || !isFirebaseConfigured || !activeLeagueIsRemote) return
     const unsubscribe = subscribeToTournament(
       activeLeagueId,
       data => setLeagues(prev => {
         const current = prev[activeLeagueId]
         if (!current) return prev
-        return { ...prev, [activeLeagueId]: { ...current, ...data, id: activeLeagueId, isOwner: false, updatedAt: Date.now() } }
+        if (deriveIsOwner(current, authEmail) && pendingLocalWrite.current) return prev
+        return { ...prev, [activeLeagueId]: { ...current, ...data, id: activeLeagueId, updatedAt: Date.now() } }
       }),
-      () => setJoinError(t.joinNotFound)
+      err => {
+        if (err?.message === 'not-found') {
+          // League was permanently deleted elsewhere.
+          setLeagues(prev => {
+            const next = { ...prev }
+            delete next[activeLeagueId]
+            return next
+          })
+          setActiveLeagueId(null)
+          setView('home')
+          setJoinError(t.leagueGone)
+        }
+      }
     )
     return unsubscribe
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeLeagueId, activeLeague?.isOwner])
+  }, [activeLeagueId, activeLeagueIsRemote, authEmail])
+
+  // "My leagues": every league where my email is an admin, live across devices.
+  useEffect(() => {
+    if (!isFirebaseConfigured || !authEmail) return
+    return subscribeToMyLeagues(authEmail, remoteLeagues => {
+      setLeagues(prev => {
+        const next = { ...prev }
+        remoteLeagues.forEach(remote => {
+          // The active league is owned by its own doc subscription; skip it
+          // here (and never while a local edit is pending).
+          if (remote.id === activeLeagueIdRef.current) return
+          const current = next[remote.id]
+          next[remote.id] = {
+            matchHistory: [],
+            draw: createDefaultDraw(),
+            settings: createDefaultSettings(),
+            matchType: 'double',
+            ...(current ?? {}),
+            ...remote,
+            updatedAt: remote.updatedAt ?? current?.updatedAt ?? Date.now()
+          }
+        })
+        return next
+      })
+    })
+  }, [authEmail])
 
   // Viewer notes: live from Firestore when configured, otherwise from the local league blob.
   useEffect(() => {
@@ -693,29 +811,29 @@ function App() {
     setJoinError('')
   }
 
-  const joinLeague = async (rawCode, mode, adminKeyAttempt = '') => {
+  // Join by code. Ownership is derived from the signed-in email vs the doc's
+  // adminEmails — a single action covers both "manager" and "watch" cases.
+  const joinLeague = async (rawCode) => {
     const code = rawCode.trim()
-    const keyAttempt = adminKeyAttempt.trim().toUpperCase()
 
     if (!isValidLeagueCode(code)) {
       setJoinError(t.joinNotFound)
       return
     }
 
-    // Saved on this device → reopen. Resuming a league saved as viewer still
-    // requires the admin key (which upgrades it to owner).
+    // Saved on this device → reopen. Exception: a saved legacy league I don't
+    // own gets the claim panel instead, so its manager can link it by key
+    // (the league row itself still opens it directly).
     const saved = leagues[code]
-    if (saved && (mode === 'watch' || saved.isOwner)) {
-      openLeague(code)
-      return
-    }
-    if (saved && mode === 'resume' && saved.adminKey) {
-      if (keyAttempt === saved.adminKey) {
-        setLeagues(prev => ({ ...prev, [code]: { ...prev[code], isOwner: true } }))
-        openLeague(code)
-      } else {
-        setJoinError(keyAttempt ? t.adminKeyWrong : t.adminKeyRequired)
+    if (saved) {
+      const savedIsLegacy = !Array.isArray(saved.adminEmails) || saved.adminEmails.length === 0
+      if (isFirebaseConfigured && savedIsLegacy && saved.adminKey && !deriveIsOwner(saved, authEmail)) {
+        setLegacyClaim({ code })
+        setClaimKeyInput('')
+        setClaimError('')
+        return
       }
+      openLeague(code)
       return
     }
 
@@ -724,25 +842,15 @@ function App() {
       return
     }
 
-    if (mode === 'resume' && !keyAttempt) {
-      setJoinError(t.adminKeyRequired)
-      return
-    }
-
     setIsJoining(true)
     setJoinError('')
+    setLegacyClaim(null)
+    setClaimError('')
     const data = await fetchRemoteLeague(code).catch(() => null)
     setIsJoining(false)
 
     if (!data) {
       setJoinError(t.joinNotFound)
-      return
-    }
-
-    // Resuming as manager: the entered admin key must match the one the league
-    // was created with. (Legacy leagues without a stored key stay open.)
-    if (mode === 'resume' && data.adminKey && data.adminKey !== keyAttempt) {
-      setJoinError(t.adminKeyWrong)
       return
     }
 
@@ -753,13 +861,106 @@ function App() {
       matchType: 'double',
       ...data,
       id: code,
-      isOwner: mode === 'resume',
+      isOwner: false,
       updatedAt: Date.now()
     }
 
     setLeagues(prev => ({ ...prev, [code]: league }))
-    setAdminKeyInput('')
+
+    // Legacy league (created under the old adminKey system, not yet claimed):
+    // offer the claim panel so its manager can link it to their account.
+    const isLegacy = !Array.isArray(data.adminEmails) || data.adminEmails.length === 0
+    if (isLegacy && data.adminKey) {
+      setLegacyClaim({ code })
+      setClaimKeyInput('')
+      return
+    }
+
     openLeague(code)
+  }
+
+  // Claim a legacy league: verify its adminKey client-side, then take email
+  // ownership (rules only accept adminEmails == [my own email] here).
+  const claimLegacy = async () => {
+    if (!legacyClaim) return
+    const { code } = legacyClaim
+    const league = leagues[code]
+    if (!league) return
+
+    if (!authEmail) {
+      setClaimError(t.claimNeedSignIn)
+      return
+    }
+    if (claimKeyInput !== league.adminKey) {
+      setClaimError(t.adminKeyWrong)
+      return
+    }
+
+    try {
+      await claimLegacyLeague(code, authEmail)
+      setLeagues(prev => ({
+        ...prev,
+        [code]: { ...prev[code], adminEmails: [authEmail], updatedAt: Date.now() }
+      }))
+      setLegacyClaim(null)
+      setClaimKeyInput('')
+      setClaimError('')
+      openLeague(code)
+    } catch (err) {
+      console.error('[firebase] failed to claim legacy league', err)
+      setClaimError(t.claimFailed)
+    }
+  }
+
+  // ---- Remove from list / permanent delete ----
+
+  const removeLeagueLocally = (id) => {
+    setLeagues(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    if (activeLeagueId === id) {
+      setActiveLeagueId(null)
+      setView('home')
+    }
+  }
+
+  const handleConfirmAction = async () => {
+    if (!confirmAction) return
+    const { type, id } = confirmAction
+
+    if (type === 'remove') {
+      removeLeagueLocally(id)
+      setConfirmAction(null)
+      return
+    }
+
+    // Permanent delete (admin only; rules enforce it too).
+    setIsDeleting(true)
+    try {
+      await deleteRemoteLeague(id)
+      removeLeagueLocally(id)
+      setConfirmAction(null)
+    } catch (err) {
+      console.error('[firebase] failed to delete league', err)
+      setJoinError(t.deleteFailed)
+      setConfirmAction(null)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  // ---- Admin management ----
+
+  const saveAdmins = async (emails) => {
+    if (!activeLeagueId || !isOwner) return
+    await setAdminEmails(activeLeagueId, emails)
+    setLeagues(prev => {
+      const current = prev[activeLeagueId]
+      if (!current) return prev
+      return { ...prev, [activeLeagueId]: { ...current, adminEmails: emails, updatedAt: Date.now() } }
+    })
   }
 
   // Auto-join if the page was opened via a shared ?join=CODE link (watch mode).
@@ -770,7 +971,7 @@ function App() {
     if (codeFromUrl && isValidLeagueCode(codeFromUrl)) {
       setJoinCodeInput(codeFromUrl)
       setView('home')
-      joinLeague(codeFromUrl, 'watch')
+      joinLeague(codeFromUrl)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -1003,6 +1204,11 @@ Lig detayları:
     setJoinError('')
   }
 
+  // First-visit auth gate: skipped for ?join=CODE visitors (watching stays
+  // frictionless) and for local-only mode. `authUser === undefined` means the
+  // auth state is still resolving — render nothing gate-related yet.
+  const showAuthGate = isFirebaseConfigured && authUser === null && !authSkipped && !urlHasJoin && !signInPending
+
   return (
     <div className="page-bg">
       <div className="decor">
@@ -1013,28 +1219,64 @@ Lig detayları:
       </div>
 
       <div className="app-frame">
-        <Header lang={lang} t={t} onSetLang={setLang} />
+        <Header
+          lang={lang}
+          t={t}
+          onSetLang={setLang}
+          authEmail={authEmail}
+          onSignOut={handleSignOut}
+          onSignIn={authUser === null ? () => { setAuthSkipped(false); setUrlHasJoin(false) } : null}
+        />
         <Ticker t={t} />
 
         <div className={`app-content ${showNav ? 'has-nav' : ''}`}>
 
-          {view === 'home' && (
-            <HomeScreen
+          {signInPending && signInNeedsEmail && (
+            <AuthScreen
               t={t}
-              leagues={leagues}
-              onOpenLeague={openLeague}
-              onNewLeague={() => setView('setup')}
-              joinCodeInput={joinCodeInput}
-              onJoinInput={(v) => { setJoinCodeInput(v); setJoinError('') }}
-              adminKeyInput={adminKeyInput}
-              onAdminKeyInput={(v) => { setAdminKeyInput(v); setJoinError('') }}
-              joinError={joinError}
-              isJoining={isJoining}
-              onJoin={joinLeague}
+              needsEmailConfirm
+              onConfirmEmail={confirmSignInEmail}
+              confirmError={signInError}
             />
           )}
 
-          {view === 'setup' && (
+          {signInPending && !signInNeedsEmail && (
+            <div className="connecting-screen">
+              <div className="spinner" />
+              <p>{t.authCompleting}</p>
+            </div>
+          )}
+
+          {!signInPending && showAuthGate && (
+            <>
+              {signInError && <p className="join-error" style={{ padding: '14px 18px 0' }}>{signInError}</p>}
+              <AuthScreen t={t} onSkip={() => setAuthSkipped(true)} />
+            </>
+          )}
+
+          {!signInPending && !showAuthGate && view === 'home' && (
+            <HomeScreen
+              t={t}
+              leagues={leagues}
+              authEmail={authEmail}
+              onOpenLeague={openLeague}
+              onNewLeague={() => setView('setup')}
+              joinCodeInput={joinCodeInput}
+              onJoinInput={(v) => { setJoinCodeInput(v); setJoinError(''); setLegacyClaim(null) }}
+              joinError={joinError}
+              isJoining={isJoining}
+              onJoin={joinLeague}
+              legacyClaim={legacyClaim}
+              claimKeyInput={claimKeyInput}
+              onClaimKeyInput={(v) => { setClaimKeyInput(v); setClaimError('') }}
+              onClaim={claimLegacy}
+              claimError={claimError}
+              onRequestRemove={(id) => setConfirmAction({ type: 'remove', id })}
+              onRequestDelete={(id) => setConfirmAction({ type: 'delete', id })}
+            />
+          )}
+
+          {!signInPending && !showAuthGate && view === 'setup' && (
             <>
               <div className="screen-pad">
                 {Object.keys(leagues).length > 0 && (
@@ -1055,19 +1297,6 @@ Lig detayları:
                     onChange={(e) => setTournamentName(e.target.value)}
                     placeholder={t.tNamePh}
                   />
-                </div>
-
-                <div className="field-card">
-                  <label className="field-label">{t.creatorEmail}</label>
-                  <input
-                    type="email"
-                    className="text-input"
-                    value={creatorEmail}
-                    onChange={(e) => setCreatorEmail(e.target.value)}
-                    placeholder={t.creatorEmailPh}
-                    style={{ textTransform: 'none' }}
-                  />
-                  <div className="field-note">{t.creatorEmailNote}</div>
                 </div>
 
                 <div className="field-card">
@@ -1094,19 +1323,25 @@ Lig detayları:
             </>
           )}
 
-          {view === 'participants' && (
+          {!signInPending && !showAuthGate && view === 'participants' && (
             <ParticipantManager
               t={t}
               participants={draftParticipants}
               participantCount={participantCount}
               onAddParticipant={addParticipant}
               onRemoveParticipant={removeParticipant}
-              onGenerateTournament={createLeague}
+              onGenerateTournament={() => {
+                if (isFirebaseConfigured && !authEmail) {
+                  setShowCreateAuthChoice(true)
+                } else {
+                  createLeague()
+                }
+              }}
               onBack={() => setView('setup')}
             />
           )}
 
-          {view === 'tournament' && activeLeague && activeTab === 'tournament' && (
+          {!signInPending && !showAuthGate && view === 'tournament' && activeLeague && activeTab === 'tournament' && (
             <TournamentScreen
               t={t}
               league={activeLeague}
@@ -1128,6 +1363,7 @@ Lig detayları:
               onMatchClick={handleMatchClick}
               onOpenSettings={() => setShowSettings(true)}
               onOpenRoster={() => setShowRoster(true)}
+              onOpenAdmins={() => setShowAdmins(true)}
               onCopyLink={() => navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?join=${activeLeague.id}`)}
               onExportCsv={exportToExcel}
               onShareEmail={shareViaEmail}
@@ -1135,7 +1371,7 @@ Lig detayları:
             />
           )}
 
-          {view === 'tournament' && activeLeague && activeTab === 'team-draw' && (
+          {!signInPending && !showAuthGate && view === 'tournament' && activeLeague && activeTab === 'team-draw' && (
             <TeamDrawTab
               t={t}
               tournament={activeLeague}
@@ -1146,7 +1382,7 @@ Lig detayları:
             />
           )}
 
-          {view === 'tournament' && !activeLeague && (
+          {!signInPending && !showAuthGate && view === 'tournament' && !activeLeague && (
             <div className="connecting-screen">
               <div className="spinner" />
               <p>{t.connecting}</p>
@@ -1188,13 +1424,51 @@ Lig detayları:
         />
       )}
 
-      {adminKeyReveal && (
-        <AdminKeyModal
+      {showAdmins && activeLeague && isOwner && (
+        <AdminManageModal
           t={t}
-          adminKey={adminKeyReveal.adminKey}
-          emailStatus={adminKeyReveal.emailStatus}
-          onClose={() => setAdminKeyReveal(null)}
+          league={activeLeague}
+          myEmail={authEmail}
+          onSave={saveAdmins}
+          onClose={() => setShowAdmins(false)}
         />
+      )}
+
+      {confirmAction && (
+        <ConfirmModal
+          t={t}
+          title={confirmAction.type === 'delete' ? t.deleteConfirmTitle : t.removeConfirmTitle}
+          body={`#${confirmAction.id} — ${confirmAction.type === 'delete' ? t.deleteConfirmBody : t.removeConfirmBody}`}
+          confirmLabel={confirmAction.type === 'delete' ? t.deleteLeague : t.removeFromList}
+          danger={confirmAction.type === 'delete'}
+          busy={isDeleting}
+          onConfirm={handleConfirmAction}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
+
+      {showCreateAuthChoice && (
+        <div className="sheet-overlay center">
+          <div className="champion-card confirm-card">
+            <div className="kicker">{t.authTitle}</div>
+            <div className="note" style={{ marginTop: 10 }}>{t.signInToCreate}</div>
+            <button
+              className="btn-cta sm"
+              style={{ marginTop: 16, width: '100%' }}
+              onClick={() => { setShowCreateAuthChoice(false); setAuthSkipped(false) }}
+            >
+              {t.signIn}
+            </button>
+            <button
+              className="btn-outline-block"
+              style={{ marginTop: 10 }}
+              onClick={() => { setShowCreateAuthChoice(false); createLeague(true) }}
+            >
+              {t.createLocalOnly}
+            </button>
+            <button onClick={() => setShowCreateAuthChoice(false)}>{t.close}</button>
+          </div>
+        </div>
       )}
 
       {isChampionTime && (
@@ -1210,7 +1484,7 @@ function TournamentScreen({
   t, league, leaderboard, tournamentCompleted, isOwner,
   currentWeek, playedCount, totalCount, nextMatch, nextMatchRound, statCards,
   fanDraft, onFanDraft, fanName, onFanName, fanNotes, onSendFan,
-  onMatchClick, onOpenSettings, onOpenRoster, onCopyLink,
+  onMatchClick, onOpenSettings, onOpenRoster, onOpenAdmins, onCopyLink,
   onExportCsv, onShareEmail, onSaveImage
 }) {
   const [tab, setTab] = useState('table') // table | fixtures | stats
@@ -1227,6 +1501,9 @@ function TournamentScreen({
           </div>
           <div style={{ display: 'flex', gap: 8, flex: 'none' }}>
             {isOwner && <button className="btn-icon" onClick={onOpenRoster}>👥</button>}
+            {isOwner && isFirebaseConfigured && Array.isArray(league.adminEmails) && league.adminEmails.length > 0 && (
+              <button className="btn-icon" title={t.adminsTitle} onClick={onOpenAdmins}>👑</button>
+            )}
             {isOwner && <button className="btn-icon" onClick={onOpenSettings}>⚙</button>}
           </div>
         </div>
@@ -1239,10 +1516,7 @@ function TournamentScreen({
 
       {isOwner && (
         <div className="sync-banner">
-          <span>
-            {t.leagueId}: <strong>#{league.id}</strong>
-            {league.adminKey && <> • {t.adminIdLabel}: <strong>{league.adminKey}</strong></>}
-          </span>
+          <span>{t.leagueId}: <strong>#{league.id}</strong></span>
           {isFirebaseConfigured && <button onClick={onCopyLink}>{t.copyLink}</button>}
         </div>
       )}

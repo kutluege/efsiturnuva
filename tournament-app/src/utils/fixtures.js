@@ -104,20 +104,6 @@ export function createDefaultSettings() {
   }
 }
 
-// Admin (owner) key: 8 chars from an unambiguous alphabet (no 0/O, 1/I/L).
-// Whoever holds this key can manage the league; viewers only need the 4-digit code.
-const ADMIN_KEY_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
-
-export function generateAdminKey() {
-  let key = ''
-  const bytes = new Uint32Array(8)
-  crypto.getRandomValues(bytes)
-  for (let i = 0; i < 8; i++) {
-    key += ADMIN_KEY_ALPHABET[bytes[i] % ADMIN_KEY_ALPHABET.length]
-  }
-  return key
-}
-
 // 4-digit league ID (1000-9999, so it's always exactly four digits).
 export function generateLeagueId() {
   return String(1000 + Math.floor(Math.random() * 9000))

@@ -12,7 +12,10 @@ Champions League formatında turnuva organize etmek için geliştirilmiş modern
 - 🏟️ Birden fazla lig kaydı: ana ekrandan kayıtlı liglere geri dönülebilir
 - 👥 Lig sürerken oyuncu ekleme/çıkarma — oynanmış maçlar geçmişe taşınır, fikstür yeniden oluşturulur, istatistikler korunur
 - 📜 Geçmiş maçlar görünümü ve kadro değişimlerinden bağımsız oyuncu istatistikleri
-- 🔑 Lig kodunu bilen herkes ligi canlı izleyebilir ya da (Firebase yapılandırıldıysa) başka cihazdan yönetici olarak devam edebilir
+- 📧 E-posta ile şifresiz giriş (Firebase email-link) — liglerin her cihazda otomatik listelenir
+- 🔑 Lig kodunu bilen herkes ligi canlı izleyebilir; yönetim yetkisi e-postaya bağlıdır
+- 👑 Çoklu yönetici: lig yöneticisi başka e-postaları da yönetici yapabilir
+- 🗑️ Liglerim ekranından lig silme (kalıcı) ya da sadece listeden kaldırma
 - 📧 Email ile paylaşım
 - ⚙️ Turnuva kuralları ayarlama
 - 🎨 Modern ve kullanıcı dostu tasarım
@@ -106,31 +109,87 @@ background: linear-gradient(135deg, #f7b801 0%, #ffc107 50%, #ffdb4d 100%);
 ### Katılımcı Sayısı Artırma
 `src/App.jsx` dosyasındaki "Katılımcı Sayısı" input'unun `max` değerini değiştirin.
 
-## Canlı Takip (Firebase)
+## Canlı Takip ve Hesap Sistemi (Firebase)
 
-Bir lig oluşturduğunuzda uygulama otomatik olarak 4 haneli bir **lig kodu** üretir. Bu kodu paylaştığınız kişiler, ana sayfadaki "Bir Lige Katıl" alanına (veya size gönderilen `?join=KOD` bağlantısına) girerek ligi gerçek zamanlı izleyebilir ("Canlı İzle") ya da başka bir cihazdan yönetici olarak devam edebilir ("Devam Et").
+Bir lig oluşturduğunuzda uygulama otomatik olarak 4 haneli bir **lig kodu** üretir. Bu kodu paylaştığınız kişiler, ana sayfadaki "Bir Lige Katıl" alanına (veya size gönderilen `?join=KOD` bağlantısına) girerek ligi gerçek zamanlı izleyebilir.
 
-Bu özellik [Firebase Firestore](https://firebase.google.com/) kullanır ve çalışması için kendi ücretsiz Firebase projenizi oluşturmanız gerekir:
+**Yönetim yetkisi e-postaya bağlıdır:** siteye ilk girişte e-posta adresiniz sorulur; adresinize gelen tek kullanımlık bağlantıya tıklayarak (şifresiz) giriş yaparsınız. Lig kurduğunuzda liginiz hesabınıza bağlanır ve giriş yaptığınız her cihazda "Liglerim" altında otomatik görünür. Yöneticisi olduğunuz liglerde 👑 butonundan başka e-postaları da yönetici yapabilirsiniz; o kişiler kendi e-postalarıyla giriş yapınca lig onların listesinde de belirir. Skor girme/düzeltme, kadro ve kura işlemleri sadece yöneticilere açıktır; lig silme de öyle.
+
+Bu özellikler [Firebase](https://firebase.google.com/) (Firestore + Authentication) kullanır ve kendi ücretsiz Firebase projenizi gerektirir:
 
 1. https://console.firebase.google.com adresinden yeni bir proje oluşturun.
 2. Proje içinde **Firestore Database** oluşturun (herhangi bir bölge, "production mode").
-3. Firestore → Rules sekmesine gidip aşağıdaki kuralları yapıştırın ve yayınlayın:
+3. **Authentication** → Get started → Sign-in method → **Email/Password** sağlayıcısını etkinleştirin ve **"Email link (passwordless sign-in)"** seçeneğini işaretleyip kaydedin.
+4. Authentication → Settings → **Authorized domains**: `localhost` zaten listede; canlı sitenizin alan adını (ör. `efsiturnuva.vercel.app` ve varsa özel alan adınızı) ekleyin. Not: Vercel *preview* URL'leri tek tek eklenmedikçe giriş bağlantıları preview'larda çalışmaz.
+5. (İsteğe bağlı) Authentication → Templates bölümünden giriş e-postasının dilini Türkçe yapabilirsiniz.
+6. Firestore → Rules sekmesine gidip aşağıdaki kuralları yapıştırın ve yayınlayın:
    ```
    rules_version = '2';
    service cloud.firestore {
      match /databases/{database}/documents {
-       match /tournaments/{code} {
-         allow get: if true;
-         allow list: if false;
-         allow create: if code.matches('^[0-9]{4}$') && isValidTournamentDoc(request.resource.data);
-         // The admin key set at creation can never be changed afterwards.
-         allow update: if isValidTournamentDoc(request.resource.data)
-           && (!('adminKey' in resource.data)
-               || request.resource.data.adminKey == resource.data.adminKey);
-         allow delete: if false;
 
-         // Viewer notes: anyone can read and append short named notes;
-         // nothing can be edited or deleted afterwards.
+       function isSignedIn() {
+         return request.auth != null && request.auth.token.email != null;
+       }
+       function isAdminOf(data) {
+         return isSignedIn() && ('adminEmails' in data)
+           && request.auth.token.email in data.adminEmails;
+       }
+       function hasValidAdminEmails(data) {
+         return (data.adminEmails is list)
+           && data.adminEmails.size() >= 1 && data.adminEmails.size() <= 10;
+       }
+       function isValidTournamentDoc(data) {
+         return data.keys().hasAll(['name', 'participants', 'rounds', 'currentRound'])
+           && (data.name is string) && (data.name.size() < 200)
+           && (data.participants is list) && (data.participants.size() <= 32)
+           && (data.rounds is list);
+       }
+
+       match /tournaments/{code} {
+         // Anyone with the 4-digit code can watch a single league.
+         allow get: if true;
+
+         // "My leagues": only queries provably restricted to the caller's own
+         // email pass, i.e. where('adminEmails', 'array-contains', <my email>).
+         allow list: if isSignedIn()
+           && request.auth.token.email in resource.data.adminEmails;
+
+         // New leagues: creator must be signed in and list themselves as admin.
+         allow create: if code.matches('^[0-9]{4}$')
+           && isValidTournamentDoc(request.resource.data)
+           && isSignedIn()
+           && hasValidAdminEmails(request.resource.data)
+           && request.auth.token.email in request.resource.data.adminEmails
+           && !('adminKey' in request.resource.data);
+
+         allow update: if isValidTournamentDoc(request.resource.data)
+           && (
+             // Modern docs: only a current admin may write, and the admin
+             // list must stay a non-empty list after the write.
+             (isAdminOf(resource.data) && hasValidAdminEmails(request.resource.data))
+             ||
+             // Legacy docs (created before auth, no adminEmails yet): the old
+             // regime — adminKey can never change. A signed-in user may
+             // "claim" the league by setting adminEmails to their own email.
+             (
+               !('adminEmails' in resource.data)
+               && (!('adminKey' in resource.data)
+                   || request.resource.data.adminKey == resource.data.adminKey)
+               && (
+                 !('adminEmails' in request.resource.data)
+                 || (isSignedIn()
+                     && request.resource.data.adminEmails == [request.auth.token.email])
+               )
+             )
+           );
+
+         // Deleting requires being an admin (legacy leagues must be claimed first).
+         allow delete: if isAdminOf(resource.data);
+
+         // Viewer notes: anyone can read and append short named notes.
+         // Admins may delete notes (also used to purge the subcollection
+         // BEFORE deleting the league document).
          match /messages/{messageId} {
            allow read: if true;
            allow create: if request.resource.data.keys().hasAll(['name', 'text'])
@@ -140,44 +199,31 @@ Bu özellik [Firebase Firestore](https://firebase.google.com/) kullanır ve çal
              && (request.resource.data.text is string)
              && (request.resource.data.text.size() >= 1)
              && (request.resource.data.text.size() <= 200);
-           allow update, delete: if false;
+           allow update: if false;
+           allow delete: if isSignedIn()
+             && request.auth.token.email in
+                get(/databases/$(database)/documents/tournaments/$(code)).data.adminEmails;
          }
        }
+
        match /{document=**} { allow read, write: if false; }
-     }
-     function isValidTournamentDoc(data) {
-       return data.keys().hasAll(['name', 'participants', 'rounds', 'currentRound'])
-         && (data.name is string)
-         && (data.name.size() < 200)
-         && (data.participants is list)
-         && (data.participants.size() <= 32)
-         && (data.rounds is list);
      }
    }
    ```
-4. Proje ayarları → "Your apps" → Web app ekleyin, verilen `firebaseConfig` değerlerini kopyalayın.
-5. Bu klasörde `.env.example` dosyasını `.env.local` olarak kopyalayıp değerleri doldurun.
-6. Vercel'de canlıya almak için aynı altı `VITE_FIREBASE_*` değişkenini Project → Settings → Environment Variables kısmına (Production ve Preview için) ekleyin ve yeniden deploy edin.
+7. Proje ayarları → "Your apps" → Web app ekleyin, verilen `firebaseConfig` değerlerini kopyalayın.
+8. Bu klasörde `.env.example` dosyasını `.env.local` olarak kopyalayıp değerleri doldurun.
+9. Vercel'de canlıya almak için aynı altı `VITE_FIREBASE_*` değişkenini Project → Settings → Environment Variables kısmına (Production ve Preview için) ekleyin ve yeniden deploy edin.
 
-Bu değişkenler ayarlanmazsa uygulama sorunsuz çalışmaya devam eder, sadece canlı takip özelliği devre dışı kalır (turnuva yine cihazınızda localStorage ile korunur).
+Bu değişkenler ayarlanmazsa uygulama sorunsuz çalışmaya devam eder; giriş ekranı çıkmaz, canlı takip ve hesap özellikleri devre dışı kalır (turnuvalar cihazınızda localStorage ile korunur).
 
-**Güvenlik notu:** Bu tasarımda kullanıcı girişi (Firebase Auth) yoktur. Lig kurulurken üretilen 8 haneli **Yönetici ID** yönetim yetkisini belirler: "Devam Et" için lig koduyla birlikte bu ID gerekir ve Firestore kuralları `adminKey` alanının sonradan değiştirilmesini engeller. Yine de doğrulama istemci tarafında yapıldığı için (doküman `get` ile okunabildiğinden) bu, kriptografik bir erişim kontrolü değil pratik bir korumadır. Gerçek "sahip" koruması istenirse ileride Firebase Anonymous Auth + `ownerUid` alanı eklenebilir.
+### Eski (Yönetici ID'li) liglerin taşınması
 
-## Yönetici ID ve E-posta (EmailJS)
+Bu sürümden önce kurulmuş liglerde yönetim 8 haneli **Yönetici ID** (adminKey) ile yapılıyordu. Böyle bir ligin kodunu "Bir Lige Katıl" alanına girdiğinizde, giriş yapmışsanız bir **"Yönetimi Devral"** paneli açılır: eski Yönetici ID'yi doğru girerseniz lig hesabınıza bağlanır (`adminEmails` alanı yazılır) ve artık e-posta ile yönetilir. Sahiplenilmemiş eski ligler silinemez — önce devralınmaları gerekir.
 
-Lig kuran kişiye otomatik olarak 8 haneli bir **Yönetici ID** atanır:
-
-- ID, lig kurulduğu anda ekranda bir kez gösterilir ve yönetici görünümündeki üst şeritte durur.
-- Skor girme, oynanmış maç skorunu düzeltme, kadro değiştirme ve kura çekme sadece bu ID ile ("Devam Et") mümkündür; kod ile katılanlar sadece izler.
-- Kurulum ekranına e-posta adresi girilirse ID bu adrese e-posta ile gönderilir.
-
-E-posta gönderimi için [EmailJS](https://www.emailjs.com) kullanılır (ücretsiz plan yeterli):
-
-1. EmailJS hesabı açın, bir **Email Service** bağlayın (ör. Gmail).
-2. Bir **Email Template** oluşturun; şablonda şu değişkenleri kullanın: `{{to_email}}` (alıcı), `{{league_name}}`, `{{league_id}}`, `{{admin_key}}`, `{{join_url}}`.
-3. `.env.local` dosyasına `VITE_EMAILJS_SERVICE_ID`, `VITE_EMAILJS_TEMPLATE_ID`, `VITE_EMAILJS_PUBLIC_KEY` değerlerini ekleyin (Vercel'de aynı değişkenleri Environment Variables kısmına da ekleyin).
-
-Bu değişkenler ayarlanmazsa uygulama, kullanıcının kendi posta uygulamasını `mailto:` ile açarak ID'yi içeren hazır bir e-posta oluşturur.
+**Güvenlik notları:**
+- Yönetim yetkisi artık Firestore kurallarında sunucu tarafında doğrulanır: skor/kadro/kura güncellemeleri ve silme, yalnızca `adminEmails` listesindeki doğrulanmış bir e-postayla giriş yapmış kullanıcılara açıktır.
+- Lig dokümanı kodu bilen herkesçe okunabildiği için (`get: true`) yönetici e-posta adresleri de kodu bilenlerce görülebilir. Bu, "ayrı kullanıcı koleksiyonu yok" tasarımının bilinçli bir ödünüdür.
+- Eski liglerdeki "devralma" adımı kriptografik değildir (adminKey dokümandan okunabilir) — eski sistemle aynı güven seviyesindedir ve yalnızca geçiş dönemi için vardır.
 
 ## Lisans
 

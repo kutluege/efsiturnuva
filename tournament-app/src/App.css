@@ -353,10 +353,6 @@ input:focus { outline: none; }
 .rule-card .segmented { grid-template-columns: 1fr 1fr; }
 .rule-card .segment-btn { height: 50px; }
 
-.email-box { border: 3px solid var(--ink); background: var(--ink); padding: 12px; }
-.email-box .title { font-family: Anton, sans-serif; font-size: 20px; text-transform: uppercase; color: var(--paper); }
-.email-box .note { font-size: 13px; font-weight: 500; color: #F3EDE1b3; margin: 4px 0 10px; line-height: 1.35; }
-.email-box input { width: 100%; height: 50px; border: 3px solid var(--paper); background: var(--paper); padding: 0 10px; font-size: 16px; font-weight: 600; color: var(--ink); }
 
 .champion-card { width: 100%; max-width: 360px; border: 5px solid var(--red); background: var(--paper); padding: 22px; text-align: center; animation: popIn .45s ease; }
 .champion-card .kicker { font-size: 12px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; color: var(--ink-soft); }
@@ -469,15 +465,6 @@ input:focus { outline: none; }
 
 .field-note { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
 
-.admin-key-value {
-  font-family: Anton, sans-serif; font-size: 40px; line-height: 1; letter-spacing: 4px;
-  color: var(--red); margin: 10px 0; border: 3px dashed var(--ink); padding: 12px 8px;
-  background: var(--paper); user-select: all;
-}
-.admin-email-status { margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--ink-soft); }
-.admin-email-status.ok { color: #1a7a2e; }
-.admin-email-status.err { color: var(--red); }
-.champion-card .btn-outline-block { margin-top: 12px; }
 
 .notes-card { margin: 18px 18px 0; border: 3px solid var(--ink); background: var(--card); padding: 12px; }
 .notes-empty { font-size: 13px; font-weight: 600; color: var(--ink-soft); margin: 0; }
@@ -524,3 +511,64 @@ input:focus { outline: none; }
   font-size: 16px; font-weight: 700; line-height: 1; cursor: pointer;
 }
 .sheet-close:hover { background: var(--red); border-color: var(--red); }
+
+/* ---- Email sign-in (auth) ---- */
+
+.auth-card { margin-top: 18px; background: var(--card); border: 3px solid var(--ink); box-shadow: 6px 6px 0 var(--ink); padding: 16px; }
+.auth-help { font-size: 14px; font-weight: 600; color: var(--ink-soft); margin: 0 0 12px; line-height: 1.4; }
+.auth-sent-email { color: var(--red); text-transform: none; }
+.auth-skip {
+  display: block; margin: 16px auto 0; border: none; background: transparent;
+  font-size: 14px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--ink-soft); cursor: pointer; text-decoration: underline;
+}
+.auth-skip:hover { color: var(--red); }
+
+.auth-chip {
+  flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+  max-width: 120px; border: 2px solid var(--paper); background: transparent;
+  padding: 3px 8px; cursor: pointer;
+}
+.auth-chip:hover { border-color: var(--red); }
+.auth-chip-email {
+  font-size: 10px; font-weight: 600; color: var(--cream-soft);
+  max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.auth-chip-action { font-family: Anton, sans-serif; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--paper); }
+
+/* ---- League row actions (remove / delete) ---- */
+
+.league-actions { display: flex; gap: 6px; flex: none; }
+.league-action-btn {
+  width: 34px; height: 34px; border: 2px solid var(--ink); background: var(--paper);
+  color: var(--ink); font-size: 14px; cursor: pointer; display: grid; place-items: center;
+}
+.league-action-btn:hover { background: var(--ink); color: var(--paper); }
+.league-action-btn.danger { border-color: var(--red); color: var(--red); }
+.league-action-btn.danger:hover { background: var(--red); color: var(--paper); }
+
+/* ---- Join card single action + legacy claim ---- */
+
+.join-btn {
+  border: 3px solid var(--ink); background: var(--ink); color: var(--paper);
+  font-family: Anton, sans-serif; font-size: 16px; text-transform: uppercase;
+  letter-spacing: 1px; cursor: pointer;
+}
+.join-btn:hover:not(:disabled) { background: var(--red); border-color: var(--red); }
+.join-btn:disabled { opacity: .45; cursor: not-allowed; }
+.legacy-claim { margin-top: 14px; border-top: 2px solid var(--ink-faint); padding-top: 12px; }
+
+/* ---- Admin management ---- */
+
+.admin-email-name { text-transform: none; font-size: 15px; overflow: hidden; text-overflow: ellipsis; }
+.admin-you-chip {
+  margin-left: 6px; border: 2px solid var(--red); color: var(--red);
+  font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding: 0 5px;
+}
+.btn-remove-chip:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ---- Confirm dialog ---- */
+
+.confirm-card .note { line-height: 1.4; }
+.sheet-actions-2 .btn-save.danger { background: var(--red); }
+.sheet-actions-2 .btn-save.danger:hover { background: var(--ink); }
